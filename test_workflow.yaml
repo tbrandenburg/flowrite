@@ -1,0 +1,48 @@
+name: Simple Test Workflow
+
+jobs:
+  setup:
+    name: Setup and decision job
+    steps:
+      - name: Setup step
+        run: echo "Running setup job"
+
+      - name: Decide whether to run job B
+        id: decide
+        run: |
+          echo "run_extra=true" >> "$GITHUB_OUTPUT"
+          echo "Setup decided run_extra=true"
+
+  job_a:
+    name: Parallel job A
+    needs: setup
+    steps:
+      - run: echo "Running job A"
+
+  job_b:
+    name: Parallel job B
+    needs: setup
+    if: needs.setup.outputs.run_extra == 'true'
+    loop:
+      until: success()
+      max_iterations: 3
+    steps:
+      - name: Job B attempt start
+        run: echo "Starting job B attempt"
+
+      - name: Poll external condition
+        id: poll
+        loop:
+          until: env.POLL_STATUS == 'COMPLETE'
+          max_iterations: 5
+        run: |
+          echo "Polling inside job B..."
+          echo "POLL_STATUS=COMPLETE" >> "$GITHUB_ENV"
+          echo "POLL_STATUS is now $POLL_STATUS"
+
+  final:
+    name: Final aggregation job
+    needs: [job_a, job_b]
+    if: always()
+    steps:
+      - run: echo "Running final job"

@@ -1,0 +1,19 @@
+
+name: Loop and Condition Test
+
+jobs:
+  failing_job:
+    name: Job that simulates failure
+    loop:
+      until: success()
+      max_iterations: 2
+    steps:
+      - name: Always fail step
+        run: exit 1
+  
+  dependent_job:
+    name: Job that depends on failing job
+    needs: failing_job
+    if: always()  
+    steps:
+      - run: echo "Running despite failure"

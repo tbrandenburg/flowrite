@@ -1,0 +1,42 @@
+name: Echo Test Workflow
+
+jobs:
+  setup:
+    name: Setup job with echoes
+    steps:
+      - name: Setup step
+        run: echo "✅ Running setup job"
+
+      - name: Decision step
+        id: decide
+        run: |
+          echo "🔧 Setup decided run_extra=true"
+          echo "run_extra=true" >> "$GITHUB_OUTPUT"
+
+  job_a:
+    name: Job A with echo
+    needs: setup
+    steps:
+      - run: echo "🚀 Running job A"
+
+  job_b:
+    name: Job B with echoes
+    needs: setup
+    if: needs.setup.outputs.run_extra == 'true'
+    steps:
+      - name: Job B start
+        run: echo "⭐ Starting job B attempt"
+
+      - name: Polling step
+        id: poll
+        run: |
+          echo "🔄 Polling inside job B..."
+          echo "POLL_STATUS=COMPLETE" >> "$GITHUB_ENV"
+          echo "📍 POLL_STATUS is now COMPLETE"
+
+  final:
+    name: Final job
+    needs: [job_a, job_b]
+    if: always()
+    steps:
+      - run: echo "🏁 Running final job"
