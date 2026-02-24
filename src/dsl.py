@@ -91,15 +91,51 @@ class WorkflowParser:
 
     @staticmethod
     def load_from_file(file_path: str) -> WorkflowDefinition:
-        """Load workflow from YAML file"""
-        with open(file_path, "r") as f:
-            yaml_data = yaml.safe_load(f)
+        """Load workflow from YAML file with user-friendly error messages"""
+        try:
+            with open(file_path, "r") as f:
+                yaml_data = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            # Provide user-friendly YAML parsing errors
+            error_msg = f"YAML parsing error in {file_path}:\n  {str(e)}\n  Please check your YAML syntax."
+            raise ValueError(error_msg) from None
+        except FileNotFoundError:
+            raise ValueError(f"Workflow file not found: {file_path}") from None
+        except PermissionError:
+            raise ValueError(f"Permission denied reading file: {file_path}") from None
+
+        if yaml_data is None:
+            raise ValueError(f"Empty or invalid YAML file: {file_path}")
+
         return WorkflowParser.parse(yaml_data)
 
     @staticmethod
     def parse(yaml_data: Dict[str, Any]) -> WorkflowDefinition:
-        """Parse YAML data into workflow definition"""
-        return WorkflowDefinition(**yaml_data)
+        """Parse YAML data into workflow definition with better error messages"""
+        if not isinstance(yaml_data, dict):
+            raise ValueError(
+                f"Invalid workflow format: expected a YAML object but got {type(yaml_data).__name__}.\n"
+                f"  Workflows must start with properties like 'name:' and 'jobs:'"
+            )
+
+        try:
+            return WorkflowDefinition(**yaml_data)
+        except TypeError as e:
+            if "unexpected keyword argument" in str(e):
+                # Extract the problematic field name
+                import re
+
+                match = re.search(r"unexpected keyword argument '(\w+)'", str(e))
+                if match:
+                    field_name = match.group(1)
+                    raise ValueError(
+                        f"Unknown workflow property: '{field_name}'\n"
+                        f"  Valid top-level properties are: name, jobs, on\n"
+                        f"  Did you mean to put '{field_name}' inside a job definition?"
+                    ) from None
+            raise ValueError(f"Workflow structure error: {str(e)}") from None
+        except Exception as e:
+            raise ValueError(f"Error parsing workflow definition: {str(e)}") from None
 
     @staticmethod
     def validate(workflow: WorkflowDefinition) -> List[str]:

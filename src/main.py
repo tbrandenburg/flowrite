@@ -452,6 +452,9 @@ def main():
                     for key, value in job_output.outputs.items():
                         print(f"    {key}={value}")
 
+        except ValueError as e:
+            # User-friendly errors (YAML parsing, validation, etc.)
+            print(f"ERROR: {e}")
         except Exception as e:
             print(f"FAILED: {e}")
             import traceback

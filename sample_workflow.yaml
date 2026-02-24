@@ -1,9 +1,5 @@
 name: Simple Parallel Workflow (loop semantics explained)
 
-on:
-  push:
-    branches: [ main ]
-
 jobs:
   setup:
     name: Setup and decision job
