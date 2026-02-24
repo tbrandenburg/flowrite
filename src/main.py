@@ -461,10 +461,6 @@ def main():
     elif command == "create-sample":
         sample_content = """name: Simple Parallel Workflow (loop semantics explained)
 
-on:
-  push:
-    branches: [ main ]
-
 jobs:
   setup:
     name: Setup and decision job
