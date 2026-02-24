@@ -1,21 +1,19 @@
 # Flowrite Workflow Executor Makefile
-# Using uv for fast Python package management and execution
+# Using uv for modern Python project management
 
 .PHONY: help install test pytest run clean worker simulation dev-setup
 .DEFAULT_GOAL := help
 
-# Check if uv is installed, use it for fast operations
+# Check if uv is installed
 UV := $(shell command -v uv 2> /dev/null)
 ifdef UV
-    PY = python
-    PYTEST = python -m pytest
-    PIP_INSTALL = uv pip install
-    UV_RUN = uv run --with
+    PY = uv run python
+    PYTEST = uv run pytest
+    SYNC_CMD = uv sync
 else
     PY = python
-    PYTEST = python -m pytest  
-    PIP_INSTALL = pip install
-    UV_RUN = echo "uv not available, skipping"
+    PYTEST = python -m pytest
+    SYNC_CMD = pip install -r requirements.txt
 endif
 
 # Default target
@@ -24,7 +22,7 @@ help:
 	@echo "========================================="
 	@echo ""
 	@echo "Available targets:"
-	@echo "  install     - Install dependencies"
+	@echo "  install     - Install dependencies using uv sync"
 	@echo "  dev-setup   - Set up development environment"
 	@echo "  test        - Run complete test suite (unit tests + integration tests)"
 	@echo "  pytest      - Run unit tests only"
@@ -45,23 +43,20 @@ help:
 	@echo "  make simulation YAML=test_workflow.yaml"
 	@echo "  make test"
 
-# Installation
+# Installation using proper uv project management
 install:
 	@echo "Installing dependencies..."
 ifdef UV
-	@echo "Using uv for fast installation..."
-	@$(PIP_INSTALL) temporalio>=1.6.0 pyyaml>=6.0.1
+	@echo "Using uv sync for dependency management..."
+	@$(SYNC_CMD) --all-extras --dev
 else
 	@echo "Using pip (uv not available)..."
-	@$(PIP_INSTALL) temporalio>=1.6.0 pyyaml>=6.0.1
+	@pip install temporalio>=1.6.0 pyyaml>=6.0.1 pytest>=7.4.0 pytest-asyncio>=0.21.0 pytest-cov>=4.1.0
 endif
 	@echo "✅ Dependencies installed successfully!"
 
 # Development setup
 dev-setup: install
-	@echo "Setting up development environment..."
-	@$(PIP_INSTALL) pytest>=7.4.0 pytest-asyncio>=0.21.0 pytest-cov>=4.1.0
-	@$(MAKE) sample
 	@echo "✅ Development environment ready!"
 
 # Test workflows and unit tests
@@ -176,7 +171,6 @@ else
 	@echo "uv: not installed (using standard Python)"
 endif
 	@echo "Python version: $(shell $(PY) --version 2>/dev/null || echo 'not available')"
-	@echo "Python location: $(shell which $(PY) 2>/dev/null || echo 'not found')"
 	@echo ""
 	@echo "Key dependencies:"
 	@$(PY) -c "import temporalio; print(f'✅ temporalio {temporalio.__version__}')" 2>/dev/null || echo "❌ temporalio not available"

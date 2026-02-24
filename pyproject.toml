@@ -1,6 +1,6 @@
 [build-system]
 requires = ["hatchling"]
-build-backend = "hatchling.build_metadata"
+build-backend = "hatchling.build"
 
 [project]
 name = "flowrite-executor"
@@ -15,6 +15,9 @@ dependencies = [
 
 [project.scripts]
 flowrite = "src.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
 
 [dependency-groups]
 dev = [
