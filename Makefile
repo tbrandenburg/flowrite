@@ -1,7 +1,7 @@
 # Flowrite Workflow Executor Makefile
 # Using uv for modern Python project management
 
-.PHONY: help install test pytest run clean worker local dev-setup temporal-server temporal-stop temporal-clean temporal-dev temporal-status
+.PHONY: help install install-deps test pytest run clean worker local dev-setup temporal-server temporal-stop temporal-clean temporal-dev temporal-status build installdirs
 .DEFAULT_GOAL := help
 
 # Check if uv is installed
@@ -10,11 +10,17 @@ ifdef UV
     PY = uv run python
     PYTEST = uv run pytest
     SYNC_CMD = uv sync
+    FLOWRITE_CMD = uv run flowrite
 else
     PY = python
     PYTEST = python -m pytest
     SYNC_CMD = pip install -r requirements.txt
+    FLOWRITE_CMD = python -m src.main
 endif
+
+# GNU Make Directory Variables
+prefix = /usr/local
+bindir = $(prefix)/bin
 
 # Default target
 help:
@@ -24,11 +30,18 @@ help:
 	@echo "Available targets:"
 	@echo ""
 	@echo "🔧 DEVELOPMENT:"
-	@echo "  install     - Install dependencies using uv sync"
+	@echo "  install-deps- Install dependencies using uv sync"
 	@echo "  dev-setup   - Set up development environment"
 	@echo "  test        - Run complete test suite (unit tests + integration tests)"
 	@echo "  pytest      - Run unit tests only"
 	@echo "  demo        - Quick demo with local mode"
+	@echo ""
+	@echo "📦 SYSTEM INSTALLATION (GNU Make compliant):"
+	@echo "  build       - Build distributable package (wheel + sdist)"
+	@echo "  install     - Install flowrite system-wide executable (use: sudo make install)"
+	@echo "  install-strip- Install system executable (same as install)"
+	@echo "  uninstall   - Remove system installation (use: sudo make uninstall)"
+	@echo "  installdirs - Create installation directories"
 	@echo ""
 	@echo "🏃 WORKFLOW EXECUTION:"
 	@echo "  local       - Run workflow in local mode (use YAML=file.yaml)"
@@ -57,7 +70,7 @@ help:
 	@echo "  make run YAML=examples/01_basic_workflow.yaml"
 
 # Installation using proper uv project management
-install:
+install-deps:
 	@echo "Installing dependencies..."
 ifdef UV
 	@echo "Using uv sync for dependency management..."
@@ -69,7 +82,7 @@ endif
 	@echo "✅ Dependencies installed successfully!"
 
 # Development setup
-dev-setup: install
+dev-setup: install-deps
 	@echo "✅ Development environment ready!"
 
 # Test workflows and unit tests
@@ -98,7 +111,7 @@ ifndef YAML
 	@exit 1
 endif
 	@echo "Running workflow: $(YAML)"
-	@$(PY) -m src.main run $(YAML)
+	@$(FLOWRITE_CMD) run $(YAML)
 
 # Run in local mode (real bash execution)
 local:
@@ -107,13 +120,13 @@ ifndef YAML
 	@exit 1
 endif
 	@echo "Running workflow in local mode: $(YAML)"
-	@$(PY) -m src.main run $(YAML) --local
+	@$(FLOWRITE_CMD) run $(YAML) --local
 
 # Start Temporal worker
 worker:
 	@echo "Starting Temporal worker..."
 	@echo "💡 Make sure Temporal server is running first with 'make temporal-server'"
-	@$(PY) -m src.main worker
+	@$(FLOWRITE_CMD) worker
 
 # 🚀 TEMPORAL ORCHESTRATION TARGETS
 
@@ -311,3 +324,84 @@ validate:
 		echo "⚠️  Could not validate pyproject.toml"
 	@echo "Testing imports..."
 	@$(PY) -c "from src.main import main; print('✅ Main module imports successfully')"
+
+# Build distribution packages
+build:
+	@echo "Building distribution packages..."
+ifdef UV
+	@echo "Using uv build for package creation..."
+	@uv build
+else
+	@echo "Using python -m build (uv not available)..."
+	@$(PY) -m build
+endif
+	@echo "✅ Build artifacts created in dist/"
+
+# Create installation directories
+installdirs:
+	@echo "Creating installation directories..."
+ifeq ($(DESTDIR),)
+	@echo "Using sudo for system directory creation..."
+	@sudo mkdir -p $(bindir)
+	@sudo mkdir -p $(prefix)/lib/python/site-packages
+else
+	@mkdir -p $(DESTDIR)$(bindir)
+	@mkdir -p $(DESTDIR)$(prefix)/lib/python/site-packages
+endif
+	@echo "✅ Installation directories created"
+
+# Install system executable  
+install: build installdirs
+	@echo "Installing flowrite system executable..."
+	@echo "Preparing package installation to temporary location..."
+	@rm -rf /tmp/flowrite-install
+	@mkdir -p /tmp/flowrite-install
+ifdef UV
+	@echo "Installing package using uv pip..."
+	@uv pip install --force-reinstall --target /tmp/flowrite-install dist/flowrite_executor-0.1.0-py3-none-any.whl
+else
+	@echo "Installing package using pip..."
+	@$(PY) -m pip install --force-reinstall --target /tmp/flowrite-install dist/flowrite_executor-0.1.0-py3-none-any.whl
+endif
+	@echo "Creating executable script..."
+	@echo '#!/usr/bin/env python3' > /tmp/flowrite-install/flowrite
+	@echo 'import sys; sys.path.insert(0, "$(prefix)/lib/python/site-packages")' >> /tmp/flowrite-install/flowrite
+	@echo 'from src.main import main' >> /tmp/flowrite-install/flowrite
+	@echo 'if __name__ == "__main__": main()' >> /tmp/flowrite-install/flowrite
+	@chmod +x /tmp/flowrite-install/flowrite
+	@echo "Installing to system directories..."
+ifeq ($(DESTDIR),)
+	@echo "Using sudo for system installation..."
+	@sudo mkdir -p $(prefix)/lib/python/site-packages
+	@sudo cp -r /tmp/flowrite-install/* $(prefix)/lib/python/site-packages/
+	@sudo mv $(prefix)/lib/python/site-packages/flowrite $(bindir)/flowrite
+	@sudo chmod +x $(bindir)/flowrite
+	@echo "✅ flowrite installed to $(bindir)/flowrite"
+else
+	@mkdir -p $(DESTDIR)$(prefix)/lib/python/site-packages
+	@cp -r /tmp/flowrite-install/* $(DESTDIR)$(prefix)/lib/python/site-packages/
+	@mv $(DESTDIR)$(prefix)/lib/python/site-packages/flowrite $(DESTDIR)$(bindir)/flowrite
+	@chmod +x $(DESTDIR)$(bindir)/flowrite
+	@echo "✅ flowrite installed to $(DESTDIR)$(bindir)/flowrite"
+endif
+	@rm -rf /tmp/flowrite-install
+
+# Install stripped executable (same as install for Python)
+install-strip: install
+	@echo "✅ flowrite installed (Python executable - no stripping needed)"
+
+# Uninstall system executable
+uninstall:
+	@echo "Uninstalling flowrite system executable..."
+ifeq ($(DESTDIR),)
+	@echo "Using sudo for system file removal..."
+	@sudo rm -f $(bindir)/flowrite
+	@sudo rm -rf $(prefix)/lib/python/site-packages/flowrite_executor*
+	@sudo rm -rf $(prefix)/lib/python/site-packages/src
+	@echo "✅ flowrite uninstalled from $(bindir)/flowrite"
+else
+	@rm -f $(DESTDIR)$(bindir)/flowrite
+	@rm -rf $(DESTDIR)$(prefix)/lib/python/site-packages/flowrite_executor*
+	@rm -rf $(DESTDIR)$(prefix)/lib/python/site-packages/src
+	@echo "✅ flowrite uninstalled from $(DESTDIR)$(bindir)/flowrite"
+endif
