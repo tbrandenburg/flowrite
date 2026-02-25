@@ -259,3 +259,89 @@ class TestConditionEvaluationCorePatterns:
         condition = "needs.existing_job.outputs.missing_key == 'value'"
         result = ConditionEvaluator.evaluate_job_condition(condition, job_outputs, {})
         assert result is False
+
+
+class TestForeachItemParsing:
+    """Test foreach item parsing functionality"""
+
+    def test_parse_foreach_items_newline_separated(self):
+        """Test parsing newline-separated foreach items"""
+        items = ConditionEvaluator.parse_foreach_items("item1\nitem2\nitem3")
+        assert items == ["item1", "item2", "item3"]
+
+        # Test with trailing newline
+        items = ConditionEvaluator.parse_foreach_items("apple\nbanana\ncherry\n")
+        assert items == ["apple", "banana", "cherry"]
+
+        # Test with empty lines (should be filtered out)
+        items = ConditionEvaluator.parse_foreach_items("file1.txt\n\nfile2.txt\n")
+        assert items == ["file1.txt", "file2.txt"]
+
+    def test_parse_foreach_items_space_separated(self):
+        """Test parsing space-separated foreach items"""
+        items = ConditionEvaluator.parse_foreach_items("apple banana cherry")
+        assert items == ["apple", "banana", "cherry"]
+
+        # Test with extra spaces
+        items = ConditionEvaluator.parse_foreach_items("  item1   item2   item3  ")
+        assert items == ["item1", "item2", "item3"]
+
+        # Test with single item
+        items = ConditionEvaluator.parse_foreach_items("single_item")
+        assert items == ["single_item"]
+
+    def test_parse_foreach_items_mixed_whitespace_prefers_newlines(self):
+        """Test that newlines take precedence over spaces in mixed whitespace"""
+        # When both newlines and spaces are present, newlines should be the delimiter
+        items = ConditionEvaluator.parse_foreach_items(
+            "file1 with spaces\nfile2 with spaces\nfile3"
+        )
+        assert items == ["file1 with spaces", "file2 with spaces", "file3"]
+
+        # Test complex case with multiple spaces and newlines
+        items = ConditionEvaluator.parse_foreach_items("item1 part1\nitem2 part2\n")
+        assert items == ["item1 part1", "item2 part2"]
+
+    def test_parse_foreach_items_edge_cases(self):
+        """Test edge cases for foreach item parsing"""
+        # Empty string
+        items = ConditionEvaluator.parse_foreach_items("")
+        assert items == []
+
+        # Only whitespace
+        items = ConditionEvaluator.parse_foreach_items("   ")
+        assert items == []
+
+        # Only newlines
+        items = ConditionEvaluator.parse_foreach_items("\n\n\n")
+        assert items == []
+
+        # Single newline
+        items = ConditionEvaluator.parse_foreach_items("\n")
+        assert items == []
+
+        # Mixed empty content
+        items = ConditionEvaluator.parse_foreach_items("   \n  \n   ")
+        assert items == []
+
+    def test_parse_foreach_items_special_characters(self):
+        """Test parsing items with special characters"""
+        # Test with file paths
+        items = ConditionEvaluator.parse_foreach_items(
+            "/path/to/file1.txt\n/path/to/file2.txt"
+        )
+        assert items == ["/path/to/file1.txt", "/path/to/file2.txt"]
+
+        # Test with URLs
+        items = ConditionEvaluator.parse_foreach_items(
+            "https://example.com/api/v1 https://example.com/api/v2"
+        )
+        assert items == ["https://example.com/api/v1", "https://example.com/api/v2"]
+
+        # Test with special characters in names
+        items = ConditionEvaluator.parse_foreach_items("item-1\nitem_2\nitem.3")
+        assert items == ["item-1", "item_2", "item.3"]
+
+        # Test with quotes (should be preserved)
+        items = ConditionEvaluator.parse_foreach_items("'item1'\n\"item2\"")
+        assert items == ["'item1'", '"item2"']

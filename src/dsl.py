@@ -186,6 +186,24 @@ class ConditionEvaluator:
         # Default: continue until max iterations
         return iteration >= max_iterations
 
+    @staticmethod
+    def parse_foreach_items(value: str) -> List[str]:
+        """Parse foreach value into list of items with smart newline/space detection"""
+        if not value or not value.strip():
+            return []
+
+        value = value.strip()
+
+        # Smart parsing - newline-separated if '\n' in value, else space-separated
+        if "\n" in value:
+            # Split by newlines and filter out empty lines
+            items = [item.strip() for item in value.split("\n") if item.strip()]
+        else:
+            # Split by spaces and filter out empty items
+            items = [item.strip() for item in value.split() if item.strip()]
+
+        return items
+
 
 class WorkflowParser:
     """Parses YAML workflows into structured definitions"""
@@ -254,6 +272,21 @@ class WorkflowParser:
             for dep in job.needs:
                 if dep not in job_ids:
                     errors.append(f"Job '{job_id}' depends on non-existent job '{dep}'")
+
+        # Validate loop configurations (mutual exclusion)
+        for job_id, job in workflow.jobs.items():
+            # Check job-level loop config
+            if job.loop and job.loop.until and job.loop.foreach:
+                errors.append(
+                    f"Job '{job_id}' cannot specify both 'until' and 'foreach' in loop configuration"
+                )
+
+            # Check step-level loop configs
+            for step_idx, step in enumerate(job.steps):
+                if step.loop and step.loop.until and step.loop.foreach:
+                    errors.append(
+                        f"Job '{job_id}' step {step_idx + 1} cannot specify both 'until' and 'foreach' in loop configuration"
+                    )
 
         # Check for circular dependencies
         visited = set()

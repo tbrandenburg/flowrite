@@ -31,6 +31,20 @@ class TestWorkflowTypes:
         assert loop.until == "success()"
         assert loop.max_iterations == 3
 
+    def test_loop_config_foreach_creation(self):
+        """Test LoopConfig with foreach field"""
+        loop = LoopConfig(foreach="item1\nitem2\nitem3", max_iterations=3)
+        assert loop.foreach == "item1\nitem2\nitem3"
+        assert loop.until is None
+        assert loop.max_iterations == 3
+
+    def test_loop_config_foreach_space_separated(self):
+        """Test LoopConfig with space-separated foreach values"""
+        loop = LoopConfig(foreach="apple banana cherry", max_iterations=10)
+        assert loop.foreach == "apple banana cherry"
+        assert loop.until is None
+        assert loop.max_iterations == 10
+
     def test_job_definition_needs_string_to_list(self):
         """Test JobDefinition converts needs string to list"""
         job = JobDefinition(needs="setup")
@@ -426,6 +440,46 @@ class TestIntegrationScenarios:
         assert step.loop is not None
         assert step.loop.until == "env.READY == 'true'"
         assert step.loop.max_iterations == 5
+
+    def test_foreach_loop_configuration_handling(self):
+        """Test foreach loop configurations are properly handled"""
+        # Test job with foreach loop
+        job_data = {
+            "name": "foreach_job",
+            "loop": {
+                "foreach": "file1.txt\nfile2.txt\nfile3.txt",
+                "max_iterations": 10,
+            },
+            "steps": [{"run": "echo processing $FOREACH_ITEM"}],
+        }
+        job = JobDefinition(**job_data)
+        assert job.loop is not None
+        assert job.loop.foreach == "file1.txt\nfile2.txt\nfile3.txt"
+        assert job.loop.until is None
+        assert job.loop.max_iterations == 10
+
+        # Test step with foreach loop (space-separated)
+        step_data = {
+            "name": "foreach_step",
+            "loop": {"foreach": "apple banana cherry", "max_iterations": 5},
+            "run": "echo processing $FOREACH_ITEM ($FOREACH_INDEX of $FOREACH_ITERATION)",
+        }
+        step = StepDefinition(**step_data)
+        assert step.loop is not None
+        assert step.loop.foreach == "apple banana cherry"
+        assert step.loop.until is None
+        assert step.loop.max_iterations == 5
+
+        # Test empty foreach string
+        empty_foreach_data = {
+            "name": "empty_foreach",
+            "loop": {"foreach": "", "max_iterations": 1},
+            "run": "echo should not iterate",
+        }
+        step = StepDefinition(**empty_foreach_data)
+        assert step.loop is not None
+        assert step.loop.foreach == ""
+        assert step.loop.until is None
 
 
 class TestErrorScenarios:

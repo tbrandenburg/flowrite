@@ -140,93 +140,277 @@ class JobWorkflow:
         """Execute a complete job with retry logic"""
         logger.info(f"Starting job: {job_id}")
 
-        max_attempts = job_def.loop.max_iterations if job_def.loop else 1
+        # Handle job-level foreach loop
+        if job_def.loop and job_def.loop.foreach:
+            items = ConditionEvaluator.parse_foreach_items(job_def.loop.foreach)
+            all_outputs = {}  # Initialize outputs for job-level foreach
 
-        for attempt in range(max_attempts):
-            try:
-                all_outputs = {}
+            for item_index, item in enumerate(items):
+                # Set job-level foreach environment variables
+                job_env_vars = env_vars.copy()
+                job_env_vars["FOREACH_ITEM"] = item
+                job_env_vars["FOREACH_INDEX"] = str(item_index)
+                job_env_vars["FOREACH_ITERATION"] = str(item_index + 1)
 
-                # Execute each step
-                for step in job_def.steps:
-                    step_max = step.loop.max_iterations if step.loop else 1
+                try:
+                    job_iteration_outputs = {}
 
-                    for step_attempt in range(step_max):
-                        # Substitute variables in command
-                        command = VariableSubstitution.substitute(
-                            step.run or "", env_vars
-                        )
+                    # Execute each step with job-level foreach env vars
+                    for step in job_def.steps:
+                        # Handle step-level foreach loop
+                        if step.loop and step.loop.foreach:
+                            step_items = ConditionEvaluator.parse_foreach_items(
+                                step.loop.foreach
+                            )
 
-                        result = await workflow.execute_activity(
-                            execute_job_step,
-                            args=[
-                                job_id,
-                                step.name or f"step-{len(all_outputs)}",
-                                command,
-                                env_vars,
-                            ],
-                            start_to_close_timeout=timedelta(
-                                seconds=config.step_timeout_seconds
-                            ),
-                        )
-
-                        if result.success:
-                            all_outputs.update(result.outputs)
-                            # Update environment with step outputs
-                            if step.id:
-                                for key, value in result.outputs.items():
-                                    env_vars[f"STEP_{step.id}_{key}".upper()] = str(
-                                        value
-                                    )
-                            break
-                        else:
-                            # Check step loop condition
-                            if step.loop:
-                                should_continue = (
-                                    not ConditionEvaluator.evaluate_loop_condition(
-                                        step.loop.until or "",
-                                        step_attempt + 1,
-                                        step_max,
-                                        result.success,
-                                        env_vars,
-                                    )
+                            for step_item_index, step_item in enumerate(step_items):
+                                # Set step foreach environment variables (inherits job foreach vars)
+                                step_env_vars = job_env_vars.copy()
+                                step_env_vars["FOREACH_ITEM"] = step_item
+                                step_env_vars["FOREACH_INDEX"] = str(step_item_index)
+                                step_env_vars["FOREACH_ITERATION"] = str(
+                                    step_item_index + 1
                                 )
-                                if should_continue and step_attempt < step_max - 1:
-                                    continue
 
-                            if step_attempt == step_max - 1:
-                                raise Exception(f"Step failed: {result.error}")
+                                # Substitute variables in command
+                                command = VariableSubstitution.substitute(
+                                    step.run or "", step_env_vars
+                                )
 
-                return JobOutput(
-                    job_id=job_id, status=JobStatus.COMPLETED.value, outputs=all_outputs
-                )
+                                result = await workflow.execute_activity(
+                                    execute_job_step,
+                                    args=[
+                                        job_id,
+                                        step.name
+                                        or f"step-{len(all_outputs)}-job-{item_index}-item-{step_item_index}",
+                                        command,
+                                        step_env_vars,
+                                    ],
+                                    start_to_close_timeout=timedelta(
+                                        seconds=config.step_timeout_seconds
+                                    ),
+                                )
 
-            except Exception as e:
-                logger.error(f"Job {job_id} attempt {attempt + 1} failed: {e}")
+                                if result.success:
+                                    all_outputs.update(result.outputs)
+                                    # Update environment with step outputs
+                                    if step.id:
+                                        for key, value in result.outputs.items():
+                                            job_env_vars[
+                                                f"STEP_{step.id}_{key}".upper()
+                                            ] = str(value)
+                                else:
+                                    # For foreach, continue to next item on failure
+                                    logger.warning(
+                                        f"Step failed for item '{step_item}': {result.error}"
+                                    )
+                        else:
+                            # Original step until/conditional loop logic
+                            step_max = step.loop.max_iterations if step.loop else 1
 
-                # Check job loop condition
-                if job_def.loop:
-                    should_continue = not ConditionEvaluator.evaluate_loop_condition(
-                        job_def.loop.until or "",
-                        attempt + 1,
-                        max_attempts,
-                        False,
-                        env_vars,
+                            for step_attempt in range(step_max):
+                                # Substitute variables in command
+                                command = VariableSubstitution.substitute(
+                                    step.run or "", job_env_vars
+                                )
+
+                                result = await workflow.execute_activity(
+                                    execute_job_step,
+                                    args=[
+                                        job_id,
+                                        step.name
+                                        or f"step-{len(all_outputs)}-job-{item_index}",
+                                        command,
+                                        job_env_vars,
+                                    ],
+                                    start_to_close_timeout=timedelta(
+                                        seconds=config.step_timeout_seconds
+                                    ),
+                                )
+
+                                if result.success:
+                                    all_outputs.update(result.outputs)
+                                    # Update environment with step outputs
+                                    if step.id:
+                                        for key, value in result.outputs.items():
+                                            job_env_vars[
+                                                f"STEP_{step.id}_{key}".upper()
+                                            ] = str(value)
+                                    break
+                                else:
+                                    # Check step loop condition
+                                    if step.loop:
+                                        should_continue = not ConditionEvaluator.evaluate_loop_condition(
+                                            step.loop.until or "",
+                                            step_attempt + 1,
+                                            step_max,
+                                            result.success,
+                                            job_env_vars,
+                                        )
+                                        if (
+                                            should_continue
+                                            and step_attempt < step_max - 1
+                                        ):
+                                            continue
+
+                                    if step_attempt == step_max - 1:
+                                        raise Exception(f"Step failed: {result.error}")
+
+                    # Job execution succeeded for this item
+                    logger.info(
+                        f"Job {job_id} completed successfully for item '{item}'"
                     )
-                    if should_continue and attempt < max_attempts - 1:
-                        await asyncio.sleep(1)
-                        continue
 
-                if attempt == max_attempts - 1:
+                except Exception as e:
+                    # For job-level foreach, continue to next item on failure
+                    logger.error(f"Job {job_id} failed for item '{item}': {e}")
+
+            # Return success for job-level foreach (processed all items)
+            return JobOutput(
+                job_id=job_id, status=JobStatus.COMPLETED.value, outputs=all_outputs
+            )
+        else:
+            # Original job until/conditional loop logic
+            max_attempts = job_def.loop.max_iterations if job_def.loop else 1
+
+            for attempt in range(max_attempts):
+                try:
+                    all_outputs = {}
+
+                    # Execute each step (original logic)
+                    for step in job_def.steps:
+                        # Handle step-level foreach loop
+                        if step.loop and step.loop.foreach:
+                            items = ConditionEvaluator.parse_foreach_items(
+                                step.loop.foreach
+                            )
+
+                            for item_index, item in enumerate(items):
+                                # Set foreach environment variables
+                                step_env_vars = env_vars.copy()
+                                step_env_vars["FOREACH_ITEM"] = item
+                                step_env_vars["FOREACH_INDEX"] = str(item_index)
+                                step_env_vars["FOREACH_ITERATION"] = str(item_index + 1)
+
+                                # Substitute variables in command
+                                command = VariableSubstitution.substitute(
+                                    step.run or "", step_env_vars
+                                )
+
+                                result = await workflow.execute_activity(
+                                    execute_job_step,
+                                    args=[
+                                        job_id,
+                                        step.name
+                                        or f"step-{len(all_outputs)}-item-{item_index}",
+                                        command,
+                                        step_env_vars,
+                                    ],
+                                    start_to_close_timeout=timedelta(
+                                        seconds=config.step_timeout_seconds
+                                    ),
+                                )
+
+                                if result.success:
+                                    all_outputs.update(result.outputs)
+                                    # Update environment with step outputs
+                                    if step.id:
+                                        for key, value in result.outputs.items():
+                                            env_vars[
+                                                f"STEP_{step.id}_{key}".upper()
+                                            ] = str(value)
+                                else:
+                                    # For foreach, continue to next item on failure
+                                    logger.warning(
+                                        f"Step failed for item '{item}': {result.error}"
+                                    )
+                        else:
+                            # Original step until/conditional loop logic
+                            step_max = step.loop.max_iterations if step.loop else 1
+
+                            for step_attempt in range(step_max):
+                                # Substitute variables in command
+                                command = VariableSubstitution.substitute(
+                                    step.run or "", env_vars
+                                )
+
+                                result = await workflow.execute_activity(
+                                    execute_job_step,
+                                    args=[
+                                        job_id,
+                                        step.name
+                                        or f"step-{len(job_iteration_outputs)}-job-{item_index}-item-{step_item_index}",
+                                        command,
+                                        step_env_vars,
+                                    ],
+                                    start_to_close_timeout=timedelta(
+                                        seconds=config.step_timeout_seconds
+                                    ),
+                                )
+
+                                if result.success:
+                                    job_iteration_outputs.update(result.outputs)
+                                    # Update environment with step outputs
+                                    if step.id:
+                                        for key, value in result.outputs.items():
+                                            env_vars[
+                                                f"STEP_{step.id}_{key}".upper()
+                                            ] = str(value)
+                                    break
+                                else:
+                                    # Check step loop condition
+                                    if step.loop:
+                                        should_continue = not ConditionEvaluator.evaluate_loop_condition(
+                                            step.loop.until or "",
+                                            step_attempt + 1,
+                                            step_max,
+                                            result.success,
+                                            env_vars,
+                                        )
+                                        if (
+                                            should_continue
+                                            and step_attempt < step_max - 1
+                                        ):
+                                            continue
+
+                                    if step_attempt == step_max - 1:
+                                        raise Exception(f"Step failed: {result.error}")
+
                     return JobOutput(
-                        job_id=job_id, status=JobStatus.FAILED.value, error=str(e)
+                        job_id=job_id,
+                        status=JobStatus.COMPLETED.value,
+                        outputs=all_outputs,
                     )
 
-        # Should not reach here
-        return JobOutput(
-            job_id=job_id,
-            status=JobStatus.FAILED.value,
-            error="Unexpected workflow termination",
-        )
+                except Exception as e:
+                    logger.error(f"Job {job_id} attempt {attempt + 1} failed: {e}")
+
+                    # Check job loop condition
+                    if job_def.loop:
+                        should_continue = (
+                            not ConditionEvaluator.evaluate_loop_condition(
+                                job_def.loop.until or "",
+                                attempt + 1,
+                                max_attempts,
+                                False,
+                                env_vars,
+                            )
+                        )
+                        if should_continue and attempt < max_attempts - 1:
+                            await asyncio.sleep(1)
+                            continue
+
+                    if attempt == max_attempts - 1:
+                        return JobOutput(
+                            job_id=job_id, status=JobStatus.FAILED.value, error=str(e)
+                        )
+
+            # Should not reach here
+            return JobOutput(
+                job_id=job_id,
+                status=JobStatus.FAILED.value,
+                error="Unexpected workflow termination",
+            )
 
 
 @workflow.defn(sandboxed=False)
