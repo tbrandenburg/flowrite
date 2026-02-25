@@ -6,7 +6,6 @@ to ensure the workflow execution system is robust against invalid or unusual inp
 """
 
 import pytest
-import logging
 from src.types import WorkflowDefinition, JobDefinition, StepDefinition
 from src.dsl import ConditionEvaluator, DependencyResolver
 from src.utils import VariableSubstitution, BashExecutor
@@ -384,7 +383,7 @@ class TestEdgeCases:
         ]
 
         for command in malformed_commands:
-            success, outputs = executor.execute_simulation(command, {})
+            success, stdout, stderr, outputs = executor.execute(command, {})
             # Should not crash the executor
             assert success is True, f"Command should not crash: {command}"
             assert isinstance(outputs, dict), (

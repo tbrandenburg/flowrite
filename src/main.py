@@ -264,184 +264,6 @@ class WorkflowExecutor:
         )
 
 
-class SimulationEngine:
-    """Simulation mode execution without Temporal server"""
-
-    def __init__(self, config: Config):
-        self.config = config
-
-    async def run_workflow(self, workflow_file: str) -> WorkflowResult:
-        """Run workflow in simulation mode"""
-        # Parse workflow
-        workflow_def = WorkflowParser.load_from_file(workflow_file)
-
-        # Validate
-        errors = WorkflowParser.validate(workflow_def)
-        if errors:
-            raise Exception(f"Workflow validation failed: {', '.join(errors)}")
-
-        logger.info(f"SIMULATION: Starting workflow {workflow_def.name}")
-
-        # Initialize execution state
-        completed = set()
-        job_outputs = {}
-        env_vars = dict(os.environ)
-        executor = BashExecutor()
-
-        # Main execution loop
-        while len(completed) < len(workflow_def.jobs):
-            # Get ready jobs
-            ready_jobs = DependencyResolver.get_ready_jobs(
-                workflow_def, completed, job_outputs, env_vars
-            )
-
-            if not ready_jobs:
-                remaining = set(workflow_def.jobs.keys()) - completed
-                if remaining:
-                    # Get detailed diagnostics
-                    diagnostics = DependencyResolver.get_job_diagnostics(
-                        workflow_def, completed, job_outputs, env_vars
-                    )
-
-                    # Categorize the issues
-                    waiting_for_deps = []
-                    condition_failed = []
-
-                    for job_id, diag in diagnostics.items():
-                        if diag["status"] == "waiting_for_dependencies":
-                            waiting_for_deps.append(
-                                f"{job_id} (needs: {diag['missing_dependencies']})"
-                            )
-                        elif diag["status"] == "condition_not_met":
-                            condition_failed.append(
-                                f"{job_id} (if: {diag['condition_details']['expression']})"
-                            )
-
-                    # Provide detailed error message
-                    if waiting_for_deps and condition_failed:
-                        logger.error(
-                            f"Jobs blocked - Dependencies: {waiting_for_deps}, Conditions: {condition_failed}"
-                        )
-                    elif waiting_for_deps:
-                        logger.error(
-                            f"Jobs waiting for dependencies: {waiting_for_deps}"
-                        )
-                    elif condition_failed:
-                        logger.error(f"Jobs with unmet conditions: {condition_failed}")
-                    else:
-                        logger.error(f"Unknown blocking issue with jobs: {remaining}")
-
-                    break
-                else:
-                    break
-
-            # Execute jobs (simulated)
-            for job_id in ready_jobs:
-                job_def = workflow_def.jobs[job_id]
-
-                # Check condition
-                if job_def.if_condition:
-                    condition_met = ConditionEvaluator.evaluate_job_condition(
-                        job_def.if_condition, job_outputs, env_vars
-                    )
-                    if not condition_met:
-                        logger.info(
-                            f"SIMULATION: Skipping {job_id} (condition not met)"
-                        )
-                        job_outputs[job_id] = {
-                            "job_id": job_id,
-                            "status": "skipped",
-                            "outputs": {},
-                        }
-                        completed.add(job_id)
-                        continue
-
-                logger.info(f"SIMULATION: Executing job {job_id}")
-                all_outputs = {}
-
-                # Execute steps
-                step_outputs = {}  # Track outputs by step id
-                for step in job_def.steps:
-                    if step.run:
-                        command = VariableSubstitution.substitute(step.run, env_vars)
-                        success, outputs = executor.execute_simulation(
-                            command, env_vars
-                        )
-                        all_outputs.update(outputs)
-
-                        # Track step outputs by step id
-                        if step.id:
-                            step_outputs[step.id] = outputs
-                            # Update environment for step references
-                            for key, value in outputs.items():
-                                env_vars[f"STEP_{step.id}_{key}".upper()] = str(value)
-
-                # Process job-level output mappings
-                job_level_outputs = {}
-                if job_def.outputs:
-                    for output_name, output_expression in job_def.outputs.items():
-                        # Handle ${{ steps.step_id.outputs.key }} patterns
-                        if "${{" in output_expression:
-                            # Extract step reference: ${{ steps.deps.outputs.ready }}
-                            import re
-
-                            step_pattern = (
-                                r"\$\{\{\s*steps\.(\w+)\.outputs\.(\w+)\s*\}\}"
-                            )
-                            match = re.search(step_pattern, output_expression)
-                            if match:
-                                step_id = match.group(1)
-                                output_key = match.group(2)
-                                if (
-                                    step_id in step_outputs
-                                    and output_key in step_outputs[step_id]
-                                ):
-                                    job_level_outputs[output_name] = step_outputs[
-                                        step_id
-                                    ][output_key]
-                        else:
-                            # Direct value or variable substitution
-                            job_level_outputs[output_name] = (
-                                VariableSubstitution.substitute(
-                                    output_expression, env_vars
-                                )
-                            )
-
-                # Combine step outputs and job-level mapped outputs
-                final_outputs = {**all_outputs, **job_level_outputs}
-
-                # Store job result
-                job_outputs[job_id] = {
-                    "job_id": job_id,
-                    "status": "completed",
-                    "outputs": final_outputs,
-                }
-
-                # Update global environment
-                for key, value in final_outputs.items():
-                    env_vars[f"JOB_{job_id.upper()}_{key.upper()}"] = str(value)
-
-                completed.add(job_id)
-                time.sleep(self.config.simulation_step_delay)
-
-        # Build final result
-        final_job_outputs = {}
-        for job_id, output_dict in job_outputs.items():
-            if isinstance(output_dict, dict):
-                final_job_outputs[job_id] = JobOutput(
-                    job_id=output_dict.get("job_id", job_id),
-                    status=JobStatus(output_dict.get("status", "completed")),
-                    outputs=output_dict.get("outputs", {}),
-                    error=output_dict.get("error"),
-                )
-
-        return WorkflowResult(
-            workflow_name=workflow_def.name,
-            status=JobStatus.COMPLETED,
-            jobs=final_job_outputs,
-        )
-
-
 class LocalEngine:
     """Local execution mode - real bash execution without Temporal server"""
 
@@ -616,7 +438,7 @@ class LocalEngine:
                             for key, value in outputs.items():
                                 env_vars[f"STEP_{step.id}_{key}".upper()] = str(value)
 
-                # Process job-level output mappings (same as simulation)
+                # Process job-level output mappings
                 job_level_outputs = {}
                 if job_def.outputs and not job_failed:
                     for output_name, output_expression in job_def.outputs.items():
@@ -741,9 +563,6 @@ def main():
         print("  worker                      - Start Temporal worker")
         print("  run <yaml> [--local]        - Execute workflow locally (real bash)")
         print(
-            "  run <yaml> [--simulation]   - Execute workflow in simulation (fake bash)"
-        )
-        print(
             "  run <yaml>                  - Execute workflow with Temporal (distributed)"
         )
         print("  create-sample               - Create sample YAML")
@@ -764,23 +583,13 @@ def main():
             print(f"Error: {yaml_file} not found")
             return
 
-        simulation = "--simulation" in sys.argv
         local_mode = "--local" in sys.argv
 
-        if simulation and local_mode:
-            print("Error: Cannot use both --simulation and --local flags")
-            return
-
-        mode_desc = (
-            "(simulation)" if simulation else "(local)" if local_mode else "(temporal)"
-        )
+        mode_desc = "(local)" if local_mode else "(temporal)"
         print(f"Executing {yaml_file} {mode_desc}")
 
         try:
-            if simulation:
-                engine = SimulationEngine(config)
-                result = asyncio.run(engine.run_workflow(yaml_file))
-            elif local_mode:
+            if local_mode:
                 engine = LocalEngine(config)
                 result = asyncio.run(engine.run_workflow(yaml_file))
             else:

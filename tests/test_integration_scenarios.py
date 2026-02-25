@@ -6,10 +6,8 @@ of multiple components working together: DAG execution, environment propagation,
 output mapping, conditional chains, and parallel execution patterns.
 """
 
-import pytest
 from src.types import WorkflowDefinition, JobDefinition, StepDefinition
-from src.dsl import DependencyResolver, WorkflowParser
-from src.main import WorkflowExecutor
+from src.dsl import DependencyResolver
 from src.utils import BashExecutor
 
 
@@ -234,7 +232,7 @@ class TestIntegrationScenarios:
         echo "DEPLOY_ENV=staging" >> "$GITHUB_ENV"
         echo "setup_complete=true" >> "$GITHUB_OUTPUT"
         """
-        success, outputs = executor.execute_simulation(setup_command, {})
+        success, stdout, stderr, outputs = executor.execute(setup_command, {})
         assert success
         assert outputs.get("setup_complete") == "true"
 
@@ -247,7 +245,9 @@ class TestIntegrationScenarios:
         echo "CONFIG_PATH=/config/$DEPLOY_ENV" >> "$GITHUB_ENV"
         echo "config_ready=true" >> "$GITHUB_OUTPUT"
         """
-        success, outputs = executor.execute_simulation(configure_command, setup_env)
+        success, stdout, stderr, outputs = executor.execute(
+            configure_command, setup_env
+        )
         assert success
         assert outputs.get("config_ready") == "true"
 
@@ -261,7 +261,7 @@ class TestIntegrationScenarios:
         echo "Using config from $CONFIG_PATH" 
         echo "deploy_status=success" >> "$GITHUB_OUTPUT"
         """
-        success, outputs = executor.execute_simulation(deploy_command, final_env)
+        success, stdout, stderr, outputs = executor.execute(deploy_command, final_env)
         assert success
         assert outputs.get("deploy_status") == "success"
 

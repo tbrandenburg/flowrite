@@ -62,7 +62,7 @@ class ConditionEvaluator:
         match = re.search(result_pattern, condition)
         if match:
             job_id, expected_result = match.groups()
-            # In simulation, we assume jobs succeed unless they failed
+            # We assume jobs succeed unless they failed
             actual_result = job_outputs.get(job_id, {}).get("status", "success")
             if actual_result == "completed":
                 actual_result = "success"

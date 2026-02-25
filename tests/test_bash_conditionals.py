@@ -1,16 +1,15 @@
 """
-Test cases for bash conditional simulation in workflow steps.
+Test cases for bash conditional execution in workflow steps.
 
 This module tests the BashExecutor's ability to handle various bash conditional
 constructs like if/else statements, pattern matching, and nested conditions.
 """
 
-import pytest
 from src.utils import BashExecutor
 
 
-class TestBashConditionalSimulation:
-    """Test bash conditional simulation capabilities"""
+class TestBashConditionalExecution:
+    """Test bash conditional execution capabilities"""
 
     def test_bash_if_else_simulation(self):
         """Test if [[ "$VAR" == "value" ]]; then ... else ... fi"""
@@ -27,14 +26,14 @@ echo "deploy_flag=$DEPLOY_FLAG" >> "$GITHUB_OUTPUT"
 """
 
         # Test production environment
-        env_vars = {"ENVIRONMENT": "production", "GITHUB_OUTPUT": "/tmp/outputs"}
-        success, outputs = executor.execute_simulation(script, env_vars)
+        env_vars = {"ENVIRONMENT": "production"}
+        success, stdout, stderr, outputs = executor.execute(script, env_vars)
         assert success
         assert outputs.get("deploy_flag") == "enabled"
 
         # Test non-production environment
-        env_vars = {"ENVIRONMENT": "staging", "GITHUB_OUTPUT": "/tmp/outputs"}
-        success, outputs = executor.execute_simulation(script, env_vars)
+        env_vars = {"ENVIRONMENT": "staging"}
+        success, stdout, stderr, outputs = executor.execute(script, env_vars)
         assert success
         assert outputs.get("deploy_flag") == "disabled"
 
@@ -55,20 +54,20 @@ fi
 
         # Test valid environments
         for valid_env in ["staging", "production"]:
-            env_vars = {"ENVIRONMENT": valid_env, "GITHUB_OUTPUT": "/tmp/outputs"}
-            success, outputs = executor.execute_simulation(script, env_vars)
+            env_vars = {"ENVIRONMENT": valid_env}
+            success, stdout, stderr, outputs = executor.execute(script, env_vars)
             assert success
             assert outputs.get("env_valid") == "true"
 
         # Test invalid environments
         for invalid_env in ["development", "testing"]:
-            env_vars = {"ENVIRONMENT": invalid_env, "GITHUB_OUTPUT": "/tmp/outputs"}
-            success, outputs = executor.execute_simulation(script, env_vars)
+            env_vars = {"ENVIRONMENT": invalid_env}
+            success, stdout, stderr, outputs = executor.execute(script, env_vars)
             assert success
             assert outputs.get("env_valid") == "false"
 
     def test_bash_nested_conditionals(self):
-        """Test multiple sequential if statements simulating conditional logic"""
+        """Test multiple sequential if statements with conditional logic"""
         executor = BashExecutor()
 
         # Test multiple sequential if statements to test conditional logic
@@ -95,9 +94,8 @@ echo "maintenance=$MAINTENANCE_MODE" >> "$GITHUB_OUTPUT"
         env_vars = {
             "DEPLOY_ENVIRONMENT": "production",
             "DEPLOY_TIME": "maintenance",
-            "GITHUB_OUTPUT": "/tmp/outputs",
         }
-        success, outputs = executor.execute_simulation(script, env_vars)
+        success, stdout, stderr, outputs = executor.execute(script, env_vars)
         assert success
         assert outputs.get("enabled") == "true"
         assert outputs.get("maintenance") == "true"
@@ -106,9 +104,8 @@ echo "maintenance=$MAINTENANCE_MODE" >> "$GITHUB_OUTPUT"
         env_vars = {
             "DEPLOY_ENVIRONMENT": "production",
             "DEPLOY_TIME": "regular",
-            "GITHUB_OUTPUT": "/tmp/outputs",
         }
-        success, outputs = executor.execute_simulation(script, env_vars)
+        success, stdout, stderr, outputs = executor.execute(script, env_vars)
         assert success
         assert outputs.get("enabled") == "true"
         assert outputs.get("maintenance") == "false"
@@ -117,9 +114,8 @@ echo "maintenance=$MAINTENANCE_MODE" >> "$GITHUB_OUTPUT"
         env_vars = {
             "DEPLOY_ENVIRONMENT": "staging",
             "DEPLOY_TIME": "maintenance",
-            "GITHUB_OUTPUT": "/tmp/outputs",
         }
-        success, outputs = executor.execute_simulation(script, env_vars)
+        success, stdout, stderr, outputs = executor.execute(script, env_vars)
         assert success
         assert outputs.get("enabled") == "false"
         assert outputs.get("maintenance") == "true"
@@ -138,13 +134,13 @@ fi
 """
 
         # Test release mode
-        env_vars = {"BUILD_MODE": "release", "GITHUB_OUTPUT": "/tmp/outputs"}
-        success, outputs = executor.execute_simulation(script, env_vars)
+        env_vars = {"BUILD_MODE": "release"}
+        success, stdout, stderr, outputs = executor.execute(script, env_vars)
         assert success
         assert outputs.get("mode") == "release"
 
         # Test debug mode
-        env_vars = {"BUILD_MODE": "debug", "GITHUB_OUTPUT": "/tmp/outputs"}
-        success, outputs = executor.execute_simulation(script, env_vars)
+        env_vars = {"BUILD_MODE": "debug"}
+        success, stdout, stderr, outputs = executor.execute(script, env_vars)
         assert success
         assert outputs.get("mode") == "debug"

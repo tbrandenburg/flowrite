@@ -28,7 +28,6 @@ class Config:
     step_timeout_seconds: int = 300  # 5 minutes
     activity_timeout_seconds: int = 30
     eval_timeout_seconds: int = 10
-    simulation_step_delay: float = 0.1
     temporal_server: str = "localhost:7233"
     max_retries: int = 3
 
