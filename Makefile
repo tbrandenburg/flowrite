@@ -121,7 +121,7 @@ worker:
 temporal-server:
 	@echo "🚀 Starting Temporal Development Server..."
 	@echo "========================================"
-	@if docker ps -q -f name=temporal-flowrite >/dev/null 2>&1; then \
+	@if [ -n "$$(docker ps -q -f name=temporal-flowrite)" ]; then \
 		echo "⚠️  Temporal server already running!"; \
 		echo "   Use 'make temporal-status' to check or 'make temporal-stop' to stop"; \
 	else \
@@ -148,7 +148,7 @@ temporal-dev:
 	@echo "This will start both server and worker for you!"
 	@echo ""
 	@$(MAKE) temporal-server
-	@if docker ps -q -f name=temporal-flowrite >/dev/null 2>&1; then \
+	@if [ -n "$$(docker ps -q -f name=temporal-flowrite)" ]; then \
 		echo "⏳ Waiting for server to be ready..."; \
 		sleep 5; \
 		echo "🔧 Starting worker in background..."; \
@@ -171,7 +171,7 @@ temporal-dev:
 temporal-status:
 	@echo "🔍 Temporal Status Check..."
 	@echo "=========================="
-	@if docker ps -q -f name=temporal-flowrite >/dev/null 2>&1; then \
+	@if [ -n "$$(docker ps -q -f name=temporal-flowrite)" ]; then \
 		echo "✅ Server: Running"; \
 		echo "   📊 Web UI: http://localhost:8233"; \
 		echo "   🔌 gRPC:   localhost:7233"; \
@@ -198,7 +198,7 @@ temporal-stop:
 		fi; \
 		rm -f temporal-worker.pid; \
 	fi
-	@if docker ps -q -f name=temporal-flowrite >/dev/null 2>&1; then \
+	@if [ -n "$$(docker ps -q -f name=temporal-flowrite)" ]; then \
 		echo "🔧 Stopping Temporal server..."; \
 		docker stop temporal-flowrite >/dev/null 2>&1 || true; \
 	fi
