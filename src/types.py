@@ -115,7 +115,7 @@ class JobOutput:
     """Results from job execution"""
 
     job_id: str
-    status: JobStatus = JobStatus.COMPLETED
+    status: str = "completed"  # Use string instead of enum for JSON serialization
     outputs: Dict[str, Any] = field(default_factory=dict)
     error: Optional[str] = None
 
@@ -134,5 +134,5 @@ class WorkflowResult:
     """Complete workflow execution results"""
 
     workflow_name: Optional[str]
-    status: JobStatus
+    status: str  # Use string instead of enum for JSON serialization
     jobs: Dict[str, JobOutput] = field(default_factory=dict)

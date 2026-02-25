@@ -66,7 +66,54 @@ async def evaluate_condition(
     return ConditionEvaluator.evaluate_job_condition(condition, job_outputs, env_vars)
 
 
-@workflow.defn
+@activity.defn
+async def get_environment_vars() -> Dict[str, str]:
+    """Get environment variables (non-deterministic operation)"""
+    return dict(os.environ)
+
+
+@activity.defn
+async def get_workflow_id() -> str:
+    """Generate workflow ID (non-deterministic operation)"""
+    return f"workflow-{os.getpid()}"
+
+
+@activity.defn
+async def load_workflow_file(workflow_file: str) -> dict:
+    """Load and parse workflow file (non-deterministic operation)"""
+    if not os.path.exists(workflow_file):
+        raise FileNotFoundError(f"Workflow file not found: {workflow_file}")
+
+    workflow_def = WorkflowParser.load_from_file(workflow_file)
+    errors = WorkflowParser.validate(workflow_def)
+    if errors:
+        raise Exception(f"Workflow validation failed: {', '.join(errors)}")
+
+    # Return as dict to allow serialization
+    return {
+        "name": workflow_def.name,
+        "jobs": {
+            job_id: {
+                "name": job.name,
+                "steps": [
+                    {
+                        "name": step.name,
+                        "run": step.run,
+                        "id": step.id,
+                        "loop": step.loop.__dict__ if step.loop else None,
+                    }
+                    for step in job.steps
+                ],
+                "needs": job.needs,
+                "if_condition": job.if_condition,
+                "loop": job.loop.__dict__ if job.loop else None,
+            }
+            for job_id, job in workflow_def.jobs.items()
+        },
+    }
+
+
+@workflow.defn(sandboxed=False)
 class JobWorkflow:
     @workflow.run
     async def run(
@@ -132,7 +179,7 @@ class JobWorkflow:
                                 raise Exception(f"Step failed: {result.error}")
 
                 return JobOutput(
-                    job_id=job_id, status=JobStatus.COMPLETED, outputs=all_outputs
+                    job_id=job_id, status=JobStatus.COMPLETED.value, outputs=all_outputs
                 )
 
             except Exception as e:
@@ -153,23 +200,23 @@ class JobWorkflow:
 
                 if attempt == max_attempts - 1:
                     return JobOutput(
-                        job_id=job_id, status=JobStatus.FAILED, error=str(e)
+                        job_id=job_id, status=JobStatus.FAILED.value, error=str(e)
                     )
 
         # Should not reach here
         return JobOutput(
             job_id=job_id,
-            status=JobStatus.FAILED,
+            status=JobStatus.FAILED.value,
             error="Unexpected workflow termination",
         )
 
 
-@workflow.defn
+@workflow.defn(sandboxed=False)
 class WorkflowExecutor:
     @workflow.run
     async def run(self, workflow_file: str) -> WorkflowResult:
         """Execute complete workflow"""
-        # Parse workflow
+        # Parse workflow directly (file I/O is deterministic for our use case)
         workflow_def = WorkflowParser.load_from_file(workflow_file)
 
         # Validate
@@ -177,12 +224,16 @@ class WorkflowExecutor:
         if errors:
             raise Exception(f"Workflow validation failed: {', '.join(errors)}")
 
+        # Get environment variables using activity
+        env_vars = await workflow.execute_activity(
+            get_environment_vars, start_to_close_timeout=timedelta(seconds=10)
+        )
+
         logger.info(f"Starting workflow: {workflow_def.name}")
 
         # Initialize execution state
         completed = set()
         job_outputs = {}
-        env_vars = dict(os.environ)
 
         # Load configuration from environment
         env_config = ConfigLoader.from_env()
@@ -221,7 +272,7 @@ class WorkflowExecutor:
 
                     if not condition_met:
                         job_outputs[job_id] = JobOutput(
-                            job_id=job_id, status=JobStatus.SKIPPED
+                            job_id=job_id, status=JobStatus.SKIPPED.value
                         ).__dict__
                         completed.add(job_id)
                         continue
@@ -248,7 +299,7 @@ class WorkflowExecutor:
                 except Exception as e:
                     logger.error(f"Job {job_id} failed: {e}")
                     job_outputs[job_id] = JobOutput(
-                        job_id=job_id, status=JobStatus.FAILED, error=str(e)
+                        job_id=job_id, status=JobStatus.FAILED.value, error=str(e)
                     ).__dict__
 
                 completed.add(job_id)
@@ -260,7 +311,7 @@ class WorkflowExecutor:
 
         return WorkflowResult(
             workflow_name=workflow_def.name,
-            status=JobStatus.COMPLETED,
+            status=JobStatus.COMPLETED.value,
             jobs=final_job_outputs,
         )
 
@@ -559,14 +610,14 @@ class LocalEngine:
         for job_id, output_dict in job_outputs.items():
             if isinstance(output_dict, dict):
                 job_status_str = output_dict.get("status", "completed")
-                # Map string status to JobStatus enum
+                # Map string status directly (no enum conversion needed)
                 if job_status_str == "failure":
-                    job_status = JobStatus.FAILED
+                    job_status = JobStatus.FAILED.value
                     workflow_failed = True
                 elif job_status_str == "skipped":
-                    job_status = JobStatus.SKIPPED
+                    job_status = JobStatus.SKIPPED.value
                 else:  # "completed" or other success statuses
-                    job_status = JobStatus.COMPLETED
+                    job_status = JobStatus.COMPLETED.value
 
                 final_job_outputs[job_id] = JobOutput(
                     job_id=output_dict.get("job_id", job_id),
@@ -575,7 +626,9 @@ class LocalEngine:
                     error=output_dict.get("error"),
                 )
 
-        overall_status = JobStatus.FAILED if workflow_failed else JobStatus.COMPLETED
+        overall_status = (
+            JobStatus.FAILED.value if workflow_failed else JobStatus.COMPLETED.value
+        )
 
         return WorkflowResult(
             workflow_name=workflow_def.name,
@@ -586,11 +639,15 @@ class LocalEngine:
 
 async def run_temporal(yaml_file: str) -> WorkflowResult:
     """Run with Temporal server"""
+    import time
+
     client = await Client.connect(config.temporal_server)
+    # Use timestamp instead of PID for workflow ID
+    workflow_id = f"workflow-{int(time.time())}-{hash(yaml_file) % 10000}"
     return await client.execute_workflow(
         WorkflowExecutor.run,
         yaml_file,
-        id=f"workflow-{os.getpid()}",
+        id=workflow_id,
         task_queue="flowrite-main",
     )
 
@@ -603,7 +660,7 @@ async def start_worker():
         client,
         task_queue="flowrite-main",
         workflows=[WorkflowExecutor],
-        activities=[evaluate_condition],
+        activities=[evaluate_condition, get_environment_vars],
     )
 
     job_worker = Worker(
@@ -707,10 +764,10 @@ def display_result(result: WorkflowResult):
     """Display workflow execution result"""
     click.echo("SUCCESS!")
     click.echo(f"Workflow: {result.workflow_name}")
-    click.echo(f"Status: {result.status.value}")
+    click.echo(f"Status: {result.status}")
     click.echo("Jobs:")
     for job_id, job_output in result.jobs.items():
-        click.echo(f"  {job_id}: {job_output.status.value}")
+        click.echo(f"  {job_id}: {job_output.status}")
         if job_output.outputs:
             for key, value in job_output.outputs.items():
                 click.echo(f"    {key}={value}")

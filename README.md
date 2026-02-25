@@ -10,6 +10,10 @@
 
 Flowrite is a production-ready workflow executor that supports GitHub Actions-compatible YAML syntax with advanced features like parallel execution, conditional logic, retry loops, and variable propagation. Built with a clean DSL architecture and staying under 750 lines in the main file.
 
+**Two Execution Modes:**
+- **🏃 Local Mode**: Immediate bash execution, perfect for development and testing
+- **⚡ Temporal Mode**: Distributed orchestration with fault tolerance for production
+
 ## ✨ Features
 
 ### 🔄 **Workflow Execution**
@@ -23,7 +27,7 @@ Flowrite is a production-ready workflow executor that supports GitHub Actions-co
 - **DSL-based parser** with clean separation of concerns
 - **Configuration-driven** execution (no hard-coded values)
 - **Generic bash execution engine** with error handling
-- **Both simulation and Temporal modes** for development and production
+- **Dual execution modes**: Local and Temporal orchestration
 - **Extensible type system** for easy feature additions
 
 ### 📊 **Code Quality**
@@ -44,24 +48,39 @@ cd flowrite
 # Install dependencies (Python 3.8+)
 pip install pyyaml temporalio
 
-# Run the demo
-make demo
+# Or use uv for faster dependency management
+uv sync
 ```
 
-### Basic Usage
+### 🏃 Local Mode (Instant Start)
 
 ```bash
-# Create a sample workflow
-make sample
+# Create and run a demo workflow
+make demo
 
-# Run in simulation mode (no Temporal server required)
-make simulation YAML=sample_workflow.yaml
+# Run any example workflow locally
+make local YAML=examples/01_basic_workflow.yaml
+make local YAML=examples/03_parallel_execution.yaml
+```
 
-# Run with Temporal server
-make run YAML=sample_workflow.yaml
+### ⚡ Temporal Mode (Distributed Orchestration)
 
-# Start Temporal worker (in separate terminal)
-make worker
+```bash
+# Option 1: All-in-one development setup (recommended)
+make temporal-dev
+
+# Then run workflows
+make run YAML=examples/01_basic_workflow.yaml
+
+# Stop when done
+make temporal-stop
+```
+
+```bash
+# Option 2: Manual setup (for more control)
+make temporal-server    # Terminal 1
+make worker            # Terminal 2
+make run YAML=examples/01_basic_workflow.yaml  # Terminal 3
 ```
 
 ## 📝 Workflow Syntax
@@ -126,15 +145,46 @@ jobs:
 
 ## 🛠️ Development
 
-### Makefile Commands
+### Available Commands
 
 ```bash
 make help          # Show all available commands
-make test          # Run test suite
-make lint          # Code quality checks
-make lines         # Verify LOC requirements
-make clean         # Clean temporary files
+
+# Development
+make install       # Install dependencies
+make test          # Run complete test suite
 make demo          # Quick demo
+
+# Local Execution (No dependencies)
+make local YAML=examples/01_basic_workflow.yaml
+
+# Temporal Orchestration (Distributed)
+make temporal-dev  # Start server + worker
+make run YAML=examples/01_basic_workflow.yaml
+make temporal-status  # Check status
+make temporal-stop    # Stop everything
+
+# Utilities  
+make lint          # Code quality checks
+make clean         # Clean temporary files
+make lines         # Verify LOC requirements
+```
+
+### 📁 Example Workflows
+
+The `examples/` folder contains 5 comprehensive workflow demonstrations:
+
+1. **`01_basic_workflow.yaml`** - Simple CI/CD pipeline with job dependencies
+2. **`02_step_sequences.yaml`** - Multi-phase deployment with step sequences  
+3. **`03_parallel_execution.yaml`** - Modern CI/CD with parallel processing
+4. **`04_loop_execution.yaml`** - Resilient workflows with retry mechanisms
+5. **`05_complex_dag.yaml`** - Enterprise deployment with complex dependencies
+
+```bash
+# Try them all!
+make local YAML=examples/01_basic_workflow.yaml
+make local YAML=examples/03_parallel_execution.yaml
+make local YAML=examples/04_loop_execution.yaml
 ```
 
 ### Project Structure
@@ -146,58 +196,55 @@ flowrite/
 │   ├── types.py     # Type definitions (139 lines)
 │   ├── dsl.py       # YAML parser & DSL (230 lines)
 │   └── utils.py     # Utilities & bash executor (279 lines)
+├── examples/        # 5 comprehensive workflow examples
+│   ├── 01_basic_workflow.yaml
+│   ├── 02_step_sequences.yaml
+│   ├── 03_parallel_execution.yaml
+│   ├── 04_loop_execution.yaml
+│   └── 05_complex_dag.yaml
 ├── docs/
 │   └── flow_blueprint.md  # Workflow specification
-├── tests/
-│   ├── test_workflow.yaml
-│   ├── flow_blueprint.yaml
-│   └── echo_test.yaml
+├── tests/           # Comprehensive test suite (129 tests)
 └── Makefile         # Development automation
 ```
 
-### Architecture
+## 🏗️ Execution Modes
 
-- **`types.py`**: Strongly-typed dataclasses for workflow components
-- **`dsl.py`**: YAML parsing, condition evaluation, dependency resolution  
-- **`utils.py`**: Bash execution, variable substitution, configuration
-- **`main.py`**: Temporal workflow orchestration + simulation engine
+### 🏃 Local Mode
+- **Zero dependencies** - runs immediately
+- **Real bash execution** with actual command processing
+- **Perfect for**: Development, testing, CI/CD pipelines
+- **Use when**: You want immediate results without setup
+
+```bash
+make local YAML=your_workflow.yaml
+```
+
+### ⚡ Temporal Mode  
+- **Distributed orchestration** with fault tolerance
+- **Requires**: Temporal server (auto-managed with Docker)
+- **Perfect for**: Production workflows, long-running processes
+- **Use when**: You need durability, retries, and distributed execution
+
+```bash
+make temporal-dev  # Starts everything for you
+make run YAML=your_workflow.yaml
+```
+
+**Temporal Features:**
+- 📊 **Web UI**: http://localhost:8233 (workflow monitoring)
+- 🔄 **Auto-recovery**: Workflows survive server restarts
+- 📈 **Scalability**: Distribute across multiple workers
+- 🛡️ **Fault tolerance**: Built-in retry and error handling
 
 ## 🧪 Testing
 
-The project includes comprehensive test workflows:
+The project includes comprehensive testing:
 
 ```bash
-# Test all workflow features
-make test
-
-# Test specific workflow
-make simulation YAML=flow_blueprint.yaml
-
-# Test actual bash execution
-python -c "from src.utils import BashExecutor; print(BashExecutor().execute('echo \"Hello World\"'))"
-```
-
-## 🏗️ Deployment
-
-### Simulation Mode (Development)
-- No external dependencies
-- Perfect for testing workflow logic
-- Parses and simulates all commands
-
-### Temporal Mode (Production)  
-- Requires Temporal server
-- Full distributed orchestration
-- Fault tolerance and durability
-
-```bash
-# Start Temporal server (Docker)
-docker run -p 7233:7233 temporalio/auto-setup:latest
-
-# Start worker
-make worker
-
-# Run workflows
-make run YAML=your_workflow.yaml
+make test          # Run all tests (129 tests)
+make pytest        # Unit tests only
+make local YAML=examples/01_basic_workflow.yaml  # Integration test
 ```
 
 ## 🤝 Contributing
@@ -225,8 +272,9 @@ MIT License - see [LICENSE](LICENSE) file for details.
 ✅ **Full GitHub Actions compatibility**: Supports standard workflow syntax  
 ✅ **Advanced loop semantics**: Job-level and step-level retry logic  
 ✅ **Parallel execution**: True concurrent job processing  
+✅ **Dual execution modes**: Local immediate + Temporal distributed
 ✅ **Production ready**: Temporal orchestration with fault tolerance  
-✅ **Developer friendly**: Comprehensive Makefile and simulation mode  
+✅ **Developer friendly**: One-command setup and comprehensive examples  
 
 ---
 
