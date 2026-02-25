@@ -6,7 +6,6 @@ at scale, handling large workflows, deep dependency chains, many conditions,
 extensive variable substitution, and monitoring memory usage.
 """
 
-import pytest
 import time
 import gc
 import psutil
@@ -424,7 +423,7 @@ class TestPerformanceScenarios:
 
         # Test bash execution with large environment
         start_time = time.time()
-        success, outputs = executor.execute_simulation(bash_script, large_env)
+        success, stdout, stderr, outputs = executor.execute(bash_script, large_env)
         execution_time = time.time() - start_time
 
         assert success, "Bash execution should succeed"

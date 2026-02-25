@@ -4,7 +4,6 @@ These tests ensure that GitHub-style variable patterns are correctly substituted
 and that step-to-job output mapping works properly.
 """
 
-import pytest
 from src.utils import VariableSubstitution, BashExecutor
 from src.dsl import OutputParser
 
@@ -91,7 +90,7 @@ class TestVariableSubstitution:
         echo "DEPLOY_READY=true" >> "$GITHUB_ENV"
         """
 
-        success, outputs1 = executor.execute_simulation(command1, {})
+        success, stdout, stderr, outputs1 = executor.execute(command1, {})
         assert success
 
         # outputs should contain both BUILD_ID and DEPLOY_READY
@@ -107,7 +106,7 @@ class TestVariableSubstitution:
         # Simulate the environment being updated with previous step's env vars
         env_from_step1 = {"BUILD_ID": "build-123", "DEPLOY_READY": "true"}
 
-        success, outputs2 = executor.execute_simulation(command2, env_from_step1)
+        success, stdout, stderr, outputs2 = executor.execute(command2, env_from_step1)
         assert success
 
         # Test variable substitution with the propagated environment

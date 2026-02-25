@@ -1,7 +1,7 @@
 # Flowrite Workflow Executor Makefile
 # Using uv for modern Python project management
 
-.PHONY: help install test pytest run clean worker simulation local dev-setup
+.PHONY: help install test pytest run clean worker local dev-setup
 .DEFAULT_GOAL := help
 
 # Check if uv is installed
@@ -28,7 +28,7 @@ help:
 	@echo "  pytest      - Run unit tests only"
 	@echo "  run         - Run workflow (use YAML=file.yaml)"
 	@echo "  local       - Run workflow in local mode (real bash execution)"
-	@echo "  simulation  - Run workflow in simulation mode"
+
 	@echo "  worker      - Start Temporal worker"
 	@echo "  sample      - Create sample workflow"
 	@echo "  clean       - Clean temporary files and cache"
@@ -42,7 +42,7 @@ help:
 	@echo "  make install"
 	@echo "  make run YAML=flow_blueprint.yaml"
 	@echo "  make local YAML=test_workflow.yaml"
-	@echo "  make simulation YAML=test_workflow.yaml"
+
 	@echo "  make test"
 
 # Installation using proper uv project management
@@ -69,9 +69,9 @@ test:
 	@$(PYTEST) tests/ -v
 	@echo ""
 	@echo "2. Running integration workflow tests..."
-	@$(PY) -m src.main run test_workflow.yaml --simulation
-	@$(PY) -m src.main run flow_blueprint.yaml --simulation
-	@$(PY) -m src.main run echo_test.yaml --simulation
+	@$(PY) -m src.main run test_workflow.yaml --local
+	@$(PY) -m src.main run flow_blueprint.yaml --local
+	@$(PY) -m src.main run echo_test.yaml --local
 	@echo "✅ All tests completed successfully!"
 
 # Run unit tests only
@@ -88,15 +88,6 @@ ifndef YAML
 endif
 	@echo "Running workflow: $(YAML)"
 	@$(PY) -m src.main run $(YAML)
-
-# Run in simulation mode
-simulation:
-ifndef YAML
-	@echo "Error: Please specify YAML file with YAML=filename.yaml"
-	@exit 1
-endif
-	@echo "Running workflow in simulation: $(YAML)"
-	@$(PY) -m src.main run $(YAML) --simulation
 
 # Run in local mode (real bash execution)
 local:
@@ -170,7 +161,7 @@ ifdef UV
 else
 	@echo "============================"
 endif
-	@$(MAKE) simulation YAML=sample_workflow.yaml
+	@$(MAKE) local YAML=sample_workflow.yaml
 
 # Environment information
 check-env:
