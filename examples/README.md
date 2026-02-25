@@ -1,6 +1,18 @@
 # Flowrite Workflow Examples
 
-This directory contains comprehensive example workflows demonstrating the various features and capabilities of the Flowrite workflow executor.
+This directory contains simplified example workflows demonstrating the various features and capabilities of the Flowrite workflow executor.
+
+## ⚡ Simplified for Local Execution
+
+These examples are **intentionally simplified** for educational purposes and reliable local execution:
+
+- **Echo-based operations**: Complex file operations, API calls, and deployments are replaced with descriptive echo statements
+- **No external dependencies**: Examples run without requiring external services, databases, or network access  
+- **Instant execution**: Sleep commands and delays are removed for immediate feedback
+- **Predictable behavior**: Random failures and timing-dependent operations are replaced with consistent demonstrations
+- **Educational focus**: Each example clearly demonstrates workflow concepts while remaining lightweight and maintainable
+
+**Purpose**: Learn workflow patterns, job dependencies, parallel execution, loops, and complex DAGs through simplified demonstrations that focus on the workflow orchestration rather than the implementation details.
 
 ## Example Workflows
 
@@ -63,11 +75,13 @@ Ensure you have Flowrite installed and configured:
 
 ```bash
 # Install dependencies
-pip install pyyaml temporalio
+uv install
 
 # Verify installation
 make help
 ```
+
+**Note**: These simplified examples require no external services, databases, or complex setup - they work immediately with just the basic Flowrite installation.
 
 ### Running Individual Examples
 
@@ -133,10 +147,12 @@ Each workflow will demonstrate:
 
 1. **Parsing Success**: YAML structure validation
 2. **Dependency Resolution**: Correct job ordering
-3. **Conditional Logic**: Proper if/when evaluation
+3. **Conditional Logic**: Proper if/when evaluation  
 4. **Variable Substitution**: Output and environment variable propagation
-5. **Loop Execution**: Retry and polling behavior (where applicable)
-6. **Error Handling**: Graceful failure management
+5. **Loop Execution**: Retry and polling behavior demonstrations (where applicable)
+6. **Error Handling**: Graceful failure management patterns
+
+**Note**: Outputs are simplified echo statements with emoji indicators (✅ 🚀 ⭐ 🔄 🏁) that clearly show workflow progression and state changes.
 
 ### Advanced Testing
 
@@ -156,10 +172,12 @@ done
 
 #### Integration Testing
 ```bash
-# Run with actual Temporal server
-docker run -p 7233:7233 temporalio/auto-setup:latest &
-make worker &
-make run YAML=examples/05_complex_dag.yaml
+# Test with local execution (no Temporal server required)
+make local YAML=examples/05_complex_dag.yaml
+
+# All examples work in both simulation and local modes
+make simulation YAML=examples/01_basic_workflow.yaml
+make local YAML=examples/01_basic_workflow.yaml
 ```
 
 ## Key Learning Points
@@ -207,4 +225,4 @@ FLOWRITE_DEBUG=1 make simulation YAML=examples/01_basic_workflow.yaml
 
 ---
 
-**Note**: These examples are designed to work in both simulation mode (for development/testing) and with a full Temporal cluster (for production use).
+**Note**: These examples are designed to work in both simulation mode and local execution mode for immediate educational value. They use echo-based operations to demonstrate workflow concepts without requiring external dependencies or complex setup.

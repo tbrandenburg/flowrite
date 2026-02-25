@@ -12,3 +12,7 @@
 * **MANDATORY** All tests must pass before committing changes
 * The test suite includes both unit tests (pytest) and integration tests (workflow simulations)
 * Any new functionality must include corresponding test coverage
+
+## Specifications
+
+* [Workflow Blueprint](docs/flow_blueprint.md) to be supported in all cases
