@@ -102,9 +102,9 @@ class TestLocalEngine:
             result = await self.engine.run_workflow(workflow_file)
 
             assert isinstance(result, WorkflowResult)
-            assert result.status == JobStatus.COMPLETED
+            assert result.status == "completed"
             assert "test-job" in result.jobs
-            assert result.jobs["test-job"].status == JobStatus.COMPLETED
+            assert result.jobs["test-job"].status == "completed"
         finally:
             os.unlink(workflow_file)
 
@@ -116,11 +116,11 @@ class TestLocalEngine:
         try:
             result = await self.engine.run_workflow(workflow_file)
 
-            assert result.status == JobStatus.COMPLETED
+            assert result.status == "completed"
             assert "setup" in result.jobs
             assert "test" in result.jobs
-            assert result.jobs["setup"].status == JobStatus.COMPLETED
-            assert result.jobs["test"].status == JobStatus.COMPLETED
+            assert result.jobs["setup"].status == "completed"
+            assert result.jobs["test"].status == "completed"
         finally:
             os.unlink(workflow_file)
 
@@ -132,11 +132,11 @@ class TestLocalEngine:
         try:
             result = await self.engine.run_workflow(workflow_file)
 
-            assert result.status == JobStatus.COMPLETED
+            assert result.status == "completed"
             assert "always-run" in result.jobs
             assert "conditional-job" in result.jobs
-            assert result.jobs["always-run"].status == JobStatus.COMPLETED
-            assert result.jobs["conditional-job"].status == JobStatus.COMPLETED
+            assert result.jobs["always-run"].status == "completed"
+            assert result.jobs["conditional-job"].status == "completed"
         finally:
             os.unlink(workflow_file)
 
@@ -157,8 +157,8 @@ class TestLocalEngine:
                 result = await self.engine.run_workflow(workflow_file)
 
                 # Should succeed after retries
-                assert result.status == JobStatus.COMPLETED
-                assert result.jobs["failing-job"].status == JobStatus.COMPLETED
+                assert result.status == "completed"
+                assert result.jobs["failing-job"].status == "completed"
                 assert mock_execute.call_count == 3  # Original + 2 retries
             finally:
                 os.unlink(workflow_file)
@@ -176,8 +176,8 @@ class TestLocalEngine:
                 result = await self.engine.run_workflow(workflow_file)
 
                 # Should fail after exhausting retries
-                assert result.status == JobStatus.FAILED
-                assert result.jobs["failing-job"].status == JobStatus.FAILED
+                assert result.status == "failed"
+                assert result.jobs["failing-job"].status == "failed"
                 assert (
                     mock_execute.call_count == 3
                 )  # Original + 2 retries (max_retries=2)
@@ -255,8 +255,8 @@ class TestLocalEngine:
             try:
                 result = await self.engine.run_workflow(workflow_file)
 
-                assert result.status == JobStatus.COMPLETED
-                assert result.jobs["env-job"].status == JobStatus.COMPLETED
+                assert result.status == "completed"
+                assert result.jobs["env-job"].status == "completed"
                 # The command should have been executed with the substituted variable
             finally:
                 os.unlink(workflow_file)
@@ -279,9 +279,9 @@ class TestLocalEngine:
         try:
             result = await self.engine.run_workflow(workflow_file)
 
-            assert result.status == JobStatus.COMPLETED
+            assert result.status == "completed"
             job_output = result.jobs["output-job"]
-            assert job_output.status == JobStatus.COMPLETED
+            assert job_output.status == "completed"
             # Note: Outputs structure depends on the LocalEngine implementation
         finally:
             os.unlink(workflow_file)
@@ -310,9 +310,9 @@ class TestLocalEngine:
         try:
             result = await self.engine.run_workflow(workflow_file)
 
-            assert result.status == JobStatus.FAILED  # Overall workflow fails
-            assert result.jobs["failingjob"].status == JobStatus.FAILED
-            assert result.jobs["conditionaljob"].status == JobStatus.SKIPPED
+            assert result.status == "failed"  # Overall workflow fails
+            assert result.jobs["failingjob"].status == "failed"
+            assert result.jobs["conditionaljob"].status == "skipped"
         finally:
             os.unlink(workflow_file)
 
@@ -380,8 +380,8 @@ class TestLocalEngineIntegration:
         try:
             result = await self.engine.run_workflow(workflow_file)
 
-            assert result.status == JobStatus.COMPLETED
-            assert result.jobs["file-job"].status == JobStatus.COMPLETED
+            assert result.status == "completed"
+            assert result.jobs["file-job"].status == "completed"
 
             # Verify the temporary file was cleaned up
             assert not os.path.exists("/tmp/test_local_engine.txt")
@@ -410,7 +410,7 @@ class TestLocalEngineIntegration:
         try:
             result = await self.engine.run_workflow(workflow_file)
 
-            assert result.status == JobStatus.COMPLETED
-            assert result.jobs["bash-job"].status == JobStatus.COMPLETED
+            assert result.status == "completed"
+            assert result.jobs["bash-job"].status == "completed"
         finally:
             os.unlink(workflow_file)

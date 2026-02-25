@@ -1,7 +1,7 @@
 # Flowrite Workflow Executor Makefile
 # Using uv for modern Python project management
 
-.PHONY: help install test pytest run clean worker local dev-setup
+.PHONY: help install test pytest run clean worker local dev-setup temporal-server temporal-stop temporal-clean temporal-dev temporal-status
 .DEFAULT_GOAL := help
 
 # Check if uv is installed
@@ -22,28 +22,39 @@ help:
 	@echo "========================================="
 	@echo ""
 	@echo "Available targets:"
+	@echo ""
+	@echo "🔧 DEVELOPMENT:"
 	@echo "  install     - Install dependencies using uv sync"
 	@echo "  dev-setup   - Set up development environment"
 	@echo "  test        - Run complete test suite (unit tests + integration tests)"
 	@echo "  pytest      - Run unit tests only"
-	@echo "  run         - Run workflow (use YAML=file.yaml)"
-	@echo "  local       - Run workflow in local mode (real bash execution)"
-
-	@echo "  worker      - Start Temporal worker"
+	@echo "  demo        - Quick demo with local mode"
+	@echo ""
+	@echo "🏃 WORKFLOW EXECUTION:"
+	@echo "  local       - Run workflow in local mode (use YAML=file.yaml)"
+	@echo "  run         - Run workflow with Temporal (use YAML=file.yaml)"
+	@echo ""
+	@echo "⚡ TEMPORAL MODE (Distributed Execution):"
+	@echo "  temporal-dev   - Start Temporal server + worker (all-in-one)"
+	@echo "  temporal-server- Start only Temporal server"
+	@echo "  worker         - Start only Temporal worker"
+	@echo "  temporal-status- Check Temporal server status"
+	@echo "  temporal-stop  - Stop Temporal server"
+	@echo "  temporal-clean - Stop and remove Temporal containers"
+	@echo ""
+	@echo "🛠️ UTILITIES:"
 	@echo "  sample      - Create sample workflow"
 	@echo "  clean       - Clean temporary files and cache"
 	@echo "  lint        - Run code linting"
 	@echo "  lines       - Verify LOC requirements"
 	@echo "  structure   - Show project structure"
-	@echo "  demo        - Quick demo"
 	@echo "  check-env   - Show environment information"
 	@echo ""
-	@echo "Examples:"
-	@echo "  make install"
-	@echo "  make run YAML=flow_blueprint.yaml"
-	@echo "  make local YAML=test_workflow.yaml"
-
-	@echo "  make test"
+	@echo "📖 EXAMPLES:"
+	@echo "  make demo                              # Quick local demo"
+	@echo "  make local YAML=examples/01_basic_workflow.yaml"
+	@echo "  make temporal-dev                      # Start server + worker"
+	@echo "  make run YAML=examples/01_basic_workflow.yaml"
 
 # Installation using proper uv project management
 install:
@@ -101,7 +112,104 @@ endif
 # Start Temporal worker
 worker:
 	@echo "Starting Temporal worker..."
+	@echo "💡 Make sure Temporal server is running first with 'make temporal-server'"
 	@$(PY) -m src.main worker
+
+# 🚀 TEMPORAL ORCHESTRATION TARGETS
+
+# Start Temporal development server
+temporal-server:
+	@echo "🚀 Starting Temporal Development Server..."
+	@echo "========================================"
+	@if docker ps -q -f name=temporal-flowrite >/dev/null 2>&1; then \
+		echo "⚠️  Temporal server already running!"; \
+		echo "   Use 'make temporal-status' to check or 'make temporal-stop' to stop"; \
+	else \
+		echo "Starting server on ports 7233 (gRPC) and 8233 (Web UI)..."; \
+		docker run -d --name temporal-flowrite --rm \
+			-p 7233:7233 -p 8233:8233 \
+			temporalio/temporal server start-dev --ip 0.0.0.0; \
+		sleep 3; \
+		echo ""; \
+		echo "✅ Temporal Server started!"; \
+		echo "   📊 Web UI: http://localhost:8233"; \
+		echo "   🔌 gRPC:   localhost:7233"; \
+		echo ""; \
+		echo "💡 Next steps:"; \
+		echo "   1. Run 'make worker' in another terminal, OR"; \
+		echo "   2. Use 'make temporal-dev' to start server + worker together"; \
+		echo "   3. Then run workflows with 'make run YAML=examples/01_basic_workflow.yaml'"; \
+	fi
+
+# Start Temporal server + worker in background (all-in-one development mode)
+temporal-dev:
+	@echo "🚀 Starting Temporal Development Environment..."
+	@echo "=============================================="
+	@echo "This will start both server and worker for you!"
+	@echo ""
+	@$(MAKE) temporal-server
+	@if docker ps -q -f name=temporal-flowrite >/dev/null 2>&1; then \
+		echo "⏳ Waiting for server to be ready..."; \
+		sleep 5; \
+		echo "🔧 Starting worker in background..."; \
+		$(PY) -m src.main worker > temporal-worker.log 2>&1 & \
+		echo $$! > temporal-worker.pid; \
+		sleep 2; \
+		echo ""; \
+		echo "🎉 Temporal Development Environment Ready!"; \
+		echo "   📊 Web UI: http://localhost:8233"; \
+		echo "   📝 Worker logs: temporal-worker.log"; \
+		echo ""; \
+		echo "▶️  Run workflows with:"; \
+		echo "   make run YAML=examples/01_basic_workflow.yaml"; \
+		echo "   make run YAML=examples/03_parallel_execution.yaml"; \
+		echo ""; \
+		echo "⏹️  Stop with: make temporal-stop"; \
+	fi
+
+# Check Temporal server status
+temporal-status:
+	@echo "🔍 Temporal Status Check..."
+	@echo "=========================="
+	@if docker ps -q -f name=temporal-flowrite >/dev/null 2>&1; then \
+		echo "✅ Server: Running"; \
+		echo "   📊 Web UI: http://localhost:8233"; \
+		echo "   🔌 gRPC:   localhost:7233"; \
+		if [ -f temporal-worker.pid ] && kill -0 `cat temporal-worker.pid` 2>/dev/null; then \
+			echo "✅ Worker: Running (PID: `cat temporal-worker.pid`)"; \
+			echo "   📝 Logs: temporal-worker.log"; \
+		else \
+			echo "❌ Worker: Not running"; \
+			echo "   💡 Start with 'make worker' or 'make temporal-dev'"; \
+		fi; \
+	else \
+		echo "❌ Server: Not running"; \
+		echo "   💡 Start with 'make temporal-server' or 'make temporal-dev'"; \
+	fi
+
+# Stop Temporal server (and worker if started with temporal-dev)
+temporal-stop:
+	@echo "⏹️  Stopping Temporal Environment..."
+	@echo "=================================="
+	@if [ -f temporal-worker.pid ]; then \
+		if kill -0 `cat temporal-worker.pid` 2>/dev/null; then \
+			echo "🔧 Stopping worker (PID: `cat temporal-worker.pid`)..."; \
+			kill `cat temporal-worker.pid` 2>/dev/null || true; \
+		fi; \
+		rm -f temporal-worker.pid; \
+	fi
+	@if docker ps -q -f name=temporal-flowrite >/dev/null 2>&1; then \
+		echo "🔧 Stopping Temporal server..."; \
+		docker stop temporal-flowrite >/dev/null 2>&1 || true; \
+	fi
+	@echo "✅ Temporal environment stopped"
+
+# Clean up all Temporal containers and files
+temporal-clean: temporal-stop
+	@echo "🧹 Cleaning up Temporal resources..."
+	@docker rm temporal-flowrite >/dev/null 2>&1 || true
+	@rm -f temporal-worker.log temporal-worker.pid
+	@echo "✅ Temporal cleanup completed"
 
 # Create sample workflow
 sample:
