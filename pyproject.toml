@@ -11,6 +11,7 @@ requires-python = ">=3.10"
 dependencies = [
     "temporalio>=1.6.0",
     "pyyaml>=6.0.1",
+    "click>=8.0.0",
 ]
 
 [project.scripts]
