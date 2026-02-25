@@ -16,28 +16,66 @@ class VariableSubstitution:
     """Handles variable substitution in commands and expressions"""
 
     @staticmethod
-    def substitute(text: str, variables: Dict[str, Any]) -> str:
-        """Substitute variables in text using ${VAR} or $VAR patterns"""
-        if not text or not variables:
+    def substitute(
+        text: str,
+        variables: Dict[str, Any],
+        github_actions_context: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Substitute variables in text with GitHub Actions support"""
+        if not text:
             return text
 
         result = text
 
-        # Handle ${VAR} patterns first (more specific)
-        for var_name, value in variables.items():
-            patterns = [f"${{{var_name}}}", f"${var_name}"]
-            str_value = str(value) if value is not None else ""
+        # First, handle GitHub Actions patterns if context provided
+        if github_actions_context:
+            result = VariableSubstitution._resolve_github_actions_patterns(
+                result, github_actions_context
+            )
 
-            for pattern in patterns:
-                result = result.replace(pattern, str_value)
+        # Then handle regular variable substitution (existing logic)
+        if variables:
+            # Handle ${VAR} patterns first (more specific)
+            for var_name, value in variables.items():
+                patterns = [f"${{{var_name}}}", f"${var_name}"]
+                str_value = str(value) if value is not None else ""
 
-        # Handle environment variables that aren't in our dict
-        env_pattern = r"\$\{([^}]+)\}"
+                for pattern in patterns:
+                    result = result.replace(pattern, str_value)
+
+        # Handle environment variables that aren't in our dict (skip GitHub Actions patterns)
+        env_pattern = r"\$\{(?!\{)([^}]+)\}"  # Negative lookahead to avoid ${{ patterns
         matches = re.findall(env_pattern, result)
         for var_name in matches:
             if var_name not in variables:
-                env_value = os.environ.get(var_name, "")
-                result = result.replace(f"${{{var_name}}}", env_value)
+                env_value = os.environ.get(var_name)
+                if env_value is not None:
+                    result = result.replace(f"${{{var_name}}}", env_value)
+
+        return result
+
+    @staticmethod
+    def _resolve_github_actions_patterns(text: str, context: Dict[str, Any]) -> str:
+        """Resolve GitHub Actions patterns like ${{ needs.setup.outputs.build_id }}"""
+        import re
+
+        result = text
+
+        # Handle needs.* patterns
+        needs_pattern = r"\$\{\{\s*needs\.(\w+)\.outputs\.(\w+)\s*\}\}"
+        needs_matches = re.findall(needs_pattern, result)
+        for job_id, output_key in needs_matches:
+            value = context.get("job_outputs", {}).get(job_id, {}).get(output_key, "")
+            pattern = f"${{{{ needs.{job_id}.outputs.{output_key} }}}}"
+            result = result.replace(pattern, str(value))
+
+        # Handle steps.* patterns
+        step_pattern = r"\$\{\{\s*steps\.(\w+)\.outputs\.(\w+)\s*\}\}"
+        step_matches = re.findall(step_pattern, result)
+        for step_id, output_key in step_matches:
+            value = context.get("step_outputs", {}).get(output_key, "")
+            pattern = f"${{{{ steps.{step_id}.outputs.{output_key} }}}}"
+            result = result.replace(pattern, str(value))
 
         return result
 
