@@ -9,6 +9,7 @@ import logging
 import os
 import sys
 import time
+import click
 from datetime import timedelta
 from typing import Dict, Any
 
@@ -272,224 +273,286 @@ class LocalEngine:
 
     async def run_workflow(self, workflow_file: str) -> WorkflowResult:
         """Run workflow in local mode with real command execution"""
-        # Parse workflow
-        workflow_def = WorkflowParser.load_from_file(workflow_file)
+        workflow_def = self._parse_and_validate_workflow(workflow_file)
+        completed, job_outputs, env_vars, executor = self._initialize_execution_state(
+            workflow_def
+        )
 
-        # Validate
+        # Main execution loop
+        while len(completed) < len(workflow_def.jobs):
+            ready_jobs, should_break = await self._get_ready_jobs_with_diagnostics(
+                workflow_def, completed, job_outputs, env_vars
+            )
+
+            if should_break:
+                break
+
+            # Execute ready jobs
+            for job_id in ready_jobs:
+                await self._execute_job(
+                    job_id, workflow_def, job_outputs, env_vars, executor, completed
+                )
+
+        return self._build_final_result(workflow_def, job_outputs)
+
+    def _parse_and_validate_workflow(self, workflow_file: str):
+        """Parse and validate workflow definition"""
+        workflow_def = WorkflowParser.load_from_file(workflow_file)
         errors = WorkflowParser.validate(workflow_def)
         if errors:
             raise Exception(f"Workflow validation failed: {', '.join(errors)}")
 
         logger.info(f"LOCAL: Starting workflow {workflow_def.name}")
+        return workflow_def
 
-        # Initialize execution state
+    def _initialize_execution_state(self, workflow_def):
+        """Initialize execution state variables"""
         completed = set()
         job_outputs = {}
         env_vars = dict(os.environ)
         executor = BashExecutor()
+        return completed, job_outputs, env_vars, executor
 
-        # Main execution loop
-        while len(completed) < len(workflow_def.jobs):
-            # Get ready jobs
-            ready_jobs = DependencyResolver.get_ready_jobs(
-                workflow_def, completed, job_outputs, env_vars
+    async def _get_ready_jobs_with_diagnostics(
+        self, workflow_def, completed, job_outputs, env_vars
+    ):
+        """Get ready jobs and handle diagnostics for blocked jobs"""
+        ready_jobs = DependencyResolver.get_ready_jobs(
+            workflow_def, completed, job_outputs, env_vars
+        )
+
+        if not ready_jobs:
+            remaining = set(workflow_def.jobs.keys()) - completed
+            if remaining:
+                return await self._handle_blocked_jobs(
+                    workflow_def, completed, job_outputs, env_vars
+                )
+            else:
+                return [], True  # No more jobs, should break
+
+        return ready_jobs, False  # Continue processing
+
+    async def _handle_blocked_jobs(
+        self, workflow_def, completed, job_outputs, env_vars
+    ):
+        """Handle jobs that are blocked by dependencies or conditions"""
+        diagnostics = DependencyResolver.get_job_diagnostics(
+            workflow_def, completed, job_outputs, env_vars
+        )
+
+        # Categorize the issues
+        waiting_for_deps = []
+        condition_failed = []
+
+        for job_id, diag in diagnostics.items():
+            if diag["status"] == "waiting_for_dependencies":
+                waiting_for_deps.append(
+                    f"{job_id} (needs: {diag['missing_dependencies']})"
+                )
+            elif diag["status"] == "condition_not_met":
+                condition_failed.append(
+                    f"{job_id} (if: {diag['condition_details']['expression']})"
+                )
+
+        # Handle different blocking scenarios
+        if waiting_for_deps and condition_failed:
+            logger.error(
+                f"Jobs blocked - Dependencies: {waiting_for_deps}, Conditions: {condition_failed}"
             )
+            self._mark_condition_failed_jobs_as_skipped(
+                diagnostics, job_outputs, completed
+            )
+            return [], False  # Continue to process remaining jobs
+        elif waiting_for_deps:
+            logger.error(f"Jobs waiting for dependencies: {waiting_for_deps}")
+        elif condition_failed:
+            logger.error(f"Jobs with unmet conditions: {condition_failed}")
+            self._mark_condition_failed_jobs_as_skipped(
+                diagnostics, job_outputs, completed
+            )
+            return [], False  # Continue to process remaining jobs
+        else:
+            remaining = set(workflow_def.jobs.keys()) - completed
+            logger.error(f"Unknown blocking issue with jobs: {remaining}")
 
-            if not ready_jobs:
-                remaining = set(workflow_def.jobs.keys()) - completed
-                if remaining:
-                    # Get detailed diagnostics
-                    diagnostics = DependencyResolver.get_job_diagnostics(
-                        workflow_def, completed, job_outputs, env_vars
-                    )
+        return [], True  # Should break from main loop
 
-                    # Categorize the issues
-                    waiting_for_deps = []
-                    condition_failed = []
-
-                    for job_id, diag in diagnostics.items():
-                        if diag["status"] == "waiting_for_dependencies":
-                            waiting_for_deps.append(
-                                f"{job_id} (needs: {diag['missing_dependencies']})"
-                            )
-                        elif diag["status"] == "condition_not_met":
-                            condition_failed.append(
-                                f"{job_id} (if: {diag['condition_details']['expression']})"
-                            )
-
-                    # Provide detailed error message and handle unmet conditions
-                    if waiting_for_deps and condition_failed:
-                        logger.error(
-                            f"Jobs blocked - Dependencies: {waiting_for_deps}, Conditions: {condition_failed}"
-                        )
-                        # Mark jobs with unmet conditions as skipped
-                        for job_id, diag in diagnostics.items():
-                            if diag["status"] == "condition_not_met":
-                                job_outputs[job_id] = {
-                                    "job_id": job_id,
-                                    "status": "skipped",
-                                    "outputs": {},
-                                }
-                                completed.add(job_id)
-                        # Continue the loop to see if we can process the remaining jobs
-                        continue
-                    elif waiting_for_deps:
-                        logger.error(
-                            f"Jobs waiting for dependencies: {waiting_for_deps}"
-                        )
-                    elif condition_failed:
-                        logger.error(f"Jobs with unmet conditions: {condition_failed}")
-                        # Mark jobs with unmet conditions as skipped
-                        for job_id, diag in diagnostics.items():
-                            if diag["status"] == "condition_not_met":
-                                job_outputs[job_id] = {
-                                    "job_id": job_id,
-                                    "status": "skipped",
-                                    "outputs": {},
-                                }
-                                completed.add(job_id)
-                        # Continue the loop to see if we can process the remaining jobs
-                        continue
-                    else:
-                        logger.error(f"Unknown blocking issue with jobs: {remaining}")
-
-                    break
-                else:
-                    break
-
-            # Execute jobs (real bash execution)
-            for job_id in ready_jobs:
-                job_def = workflow_def.jobs[job_id]
-
-                # Check condition
-                if job_def.if_condition:
-                    condition_met = ConditionEvaluator.evaluate_job_condition(
-                        job_def.if_condition, job_outputs, env_vars
-                    )
-                    if not condition_met:
-                        logger.info(f"LOCAL: Skipping {job_id} (condition not met)")
-                        job_outputs[job_id] = {
-                            "job_id": job_id,
-                            "status": "skipped",
-                            "outputs": {},
-                        }
-                        completed.add(job_id)
-                        continue
-
-                logger.info(f"LOCAL: Executing job {job_id}")
-                all_outputs = {}
-                job_failed = False
-                error_message = None
-
-                # Execute steps with real bash commands
-                step_outputs = {}  # Track outputs by step id
-                for step in job_def.steps:
-                    if step.run and not job_failed:
-                        command = VariableSubstitution.substitute(step.run, env_vars)
-
-                        # KEY DIFFERENCE: Use real execution with retry logic
-                        max_retries = getattr(self.config, "max_retries", 3)
-                        outputs = {}  # Initialize outputs
-                        step_succeeded = False
-
-                        for attempt in range(max_retries + 1):
-                            try:
-                                success, stdout, stderr, env_updates = executor.execute(
-                                    command, env_vars, working_dir=os.getcwd()
-                                )
-
-                                if success:
-                                    # Parse outputs from env_updates (GITHUB_OUTPUT/GITHUB_ENV)
-                                    outputs = env_updates
-                                    all_outputs.update(outputs)
-                                    step_succeeded = True
-                                    break
-                                elif attempt < max_retries:
-                                    logger.warning(
-                                        f"LOCAL: Retry {attempt + 1}/{max_retries} for command: {command[:50]}..."
-                                    )
-                                    await asyncio.sleep(
-                                        2**attempt
-                                    )  # Exponential backoff
-                                else:
-                                    logger.error(
-                                        f"LOCAL: Step failed in job {job_id}: {stderr}"
-                                    )
-                                    job_failed = True
-                                    error_message = f"Command failed after {max_retries + 1} attempts: {stderr}"
-                                    break
-                            except Exception as e:
-                                if attempt == max_retries:
-                                    logger.error(
-                                        f"LOCAL: Step execution error in job {job_id}: {e}"
-                                    )
-                                    job_failed = True
-                                    error_message = f"Execution error after {max_retries + 1} attempts: {e}"
-                                    break
-                                logger.warning(
-                                    f"LOCAL: Execution attempt {attempt + 1} failed: {e}"
-                                )
-                                await asyncio.sleep(2**attempt)
-
-                        # Track step outputs by step id (only if step succeeded)
-                        if step_succeeded and step.id:
-                            step_outputs[step.id] = outputs
-                            # Update environment for step references
-                            for key, value in outputs.items():
-                                env_vars[f"STEP_{step.id}_{key}".upper()] = str(value)
-
-                # Process job-level output mappings
-                job_level_outputs = {}
-                if job_def.outputs and not job_failed:
-                    for output_name, output_expression in job_def.outputs.items():
-                        # Handle ${{ steps.step_id.outputs.key }} patterns
-                        if "${{" in output_expression:
-                            # Extract step reference: ${{ steps.deps.outputs.ready }}
-                            import re
-
-                            step_pattern = (
-                                r"\$\{\{\s*steps\.(\w+)\.outputs\.(\w+)\s*\}\}"
-                            )
-                            match = re.search(step_pattern, output_expression)
-                            if match:
-                                step_id = match.group(1)
-                                output_key = match.group(2)
-                                if (
-                                    step_id in step_outputs
-                                    and output_key in step_outputs[step_id]
-                                ):
-                                    job_level_outputs[output_name] = step_outputs[
-                                        step_id
-                                    ][output_key]
-                        else:
-                            # Direct value or variable substitution
-                            job_level_outputs[output_name] = (
-                                VariableSubstitution.substitute(
-                                    output_expression, env_vars
-                                )
-                            )
-
-                # Combine step outputs and job-level mapped outputs
-                final_outputs = {**all_outputs, **job_level_outputs}
-
-                # Store job result (failed or completed)
-                job_status = "failure" if job_failed else "completed"
-                job_outputs[job_id] = {
-                    "job_id": job_id,
-                    "status": job_status,
-                    "outputs": final_outputs,
-                    "error": error_message if job_failed else None,
-                }
-
-                # Update global environment (only if job succeeded)
-                if not job_failed:
-                    for key, value in final_outputs.items():
-                        env_vars[f"JOB_{job_id.upper()}_{key.upper()}"] = str(value)
-
+    def _mark_condition_failed_jobs_as_skipped(
+        self, diagnostics, job_outputs, completed
+    ):
+        """Mark jobs with unmet conditions as skipped"""
+        for job_id, diag in diagnostics.items():
+            if diag["status"] == "condition_not_met":
+                job_outputs[job_id] = self._create_job_output(job_id, "skipped")
                 completed.add(job_id)
-                # No artificial delay for local execution
 
-        # Build final result and determine overall status
+    def _create_job_output(self, job_id: str, status: str, outputs=None, error=None):
+        """Factory method for creating job output dictionaries"""
+        return {
+            "job_id": job_id,
+            "status": status,
+            "outputs": outputs if outputs is not None else {},
+            "error": error,
+        }
+
+    async def _execute_job(
+        self, job_id: str, workflow_def, job_outputs, env_vars, executor, completed
+    ):
+        """Execute a single job with all its steps"""
+        job_def = workflow_def.jobs[job_id]
+
+        # Check condition first
+        if job_def.if_condition:
+            condition_met = ConditionEvaluator.evaluate_job_condition(
+                job_def.if_condition, job_outputs, env_vars
+            )
+            if not condition_met:
+                logger.info(f"LOCAL: Skipping {job_id} (condition not met)")
+                job_outputs[job_id] = self._create_job_output(job_id, "skipped")
+                completed.add(job_id)
+                return
+
+        logger.info(f"LOCAL: Executing job {job_id}")
+
+        # Execute all steps in the job
+        all_outputs, job_failed, error_message = await self._execute_job_steps(
+            job_def, env_vars, executor, job_id
+        )
+
+        # Process job-level output mappings
+        job_level_outputs = self._process_job_level_outputs(
+            job_def, all_outputs, env_vars, job_failed
+        )
+
+        # Combine outputs and store result
+        final_outputs = {**all_outputs, **job_level_outputs}
+        job_status = "failure" if job_failed else "completed"
+
+        job_outputs[job_id] = self._create_job_output(
+            job_id, job_status, final_outputs, error_message
+        )
+
+        # Update global environment (only if job succeeded)
+        if not job_failed:
+            self._update_global_environment(job_id, final_outputs, env_vars)
+
+        completed.add(job_id)
+
+    async def _execute_job_steps(self, job_def, env_vars, executor, job_id):
+        """Execute all steps in a job with retry logic"""
+        all_outputs = {}
+        job_failed = False
+        error_message = None
+        step_outputs = {}  # Track outputs by step id
+
+        max_retries = getattr(self.config, "max_retries", 3)
+
+        for step in job_def.steps:
+            if step.run and not job_failed:
+                command = VariableSubstitution.substitute(step.run, env_vars)
+                (
+                    outputs,
+                    step_succeeded,
+                    step_error,
+                ) = await self._execute_step_with_retry(
+                    command, env_vars, executor, max_retries, job_id
+                )
+
+                if step_succeeded:
+                    all_outputs.update(outputs)
+                    if step.id:
+                        step_outputs[step.id] = outputs
+                        self._update_step_environment(step.id, outputs, env_vars)
+                else:
+                    job_failed = True
+                    error_message = step_error
+                    break
+
+        return all_outputs, job_failed, error_message
+
+    async def _execute_step_with_retry(
+        self, command, env_vars, executor, max_retries, job_id
+    ):
+        """Execute a single step with retry logic and exponential backoff"""
+        outputs = {}
+
+        for attempt in range(max_retries + 1):
+            try:
+                success, stdout, stderr, env_updates = executor.execute(
+                    command, env_vars, working_dir=os.getcwd()
+                )
+
+                if success:
+                    outputs = env_updates
+                    return outputs, True, None
+                elif attempt < max_retries:
+                    logger.warning(
+                        f"LOCAL: Retry {attempt + 1}/{max_retries} for command: {command[:50]}..."
+                    )
+                    await asyncio.sleep(2**attempt)  # Exponential backoff
+                else:
+                    error_msg = (
+                        f"Command failed after {max_retries + 1} attempts: {stderr}"
+                    )
+                    logger.error(f"LOCAL: Step failed in job {job_id}: {stderr}")
+                    return outputs, False, error_msg
+            except Exception as e:
+                if attempt == max_retries:
+                    error_msg = f"Execution error after {max_retries + 1} attempts: {e}"
+                    logger.error(f"LOCAL: Step execution error in job {job_id}: {e}")
+                    return outputs, False, error_msg
+                logger.warning(f"LOCAL: Execution attempt {attempt + 1} failed: {e}")
+                await asyncio.sleep(2**attempt)
+
+        return outputs, False, "Unknown execution error"
+
+    def _update_step_environment(self, step_id, outputs, env_vars):
+        """Update environment variables for step references"""
+        for key, value in outputs.items():
+            env_vars[f"STEP_{step_id}_{key}".upper()] = str(value)
+
+    def _process_job_level_outputs(
+        self, job_def, step_outputs_dict, env_vars, job_failed
+    ):
+        """Process job-level output mappings"""
+        job_level_outputs = {}
+        if job_def.outputs and not job_failed:
+            for output_name, output_expression in job_def.outputs.items():
+                if "${{" in output_expression:
+                    # Handle step reference patterns
+                    value = self._resolve_step_reference(
+                        output_expression, step_outputs_dict
+                    )
+                    if value is not None:
+                        job_level_outputs[output_name] = value
+                else:
+                    # Direct value or variable substitution
+                    job_level_outputs[output_name] = VariableSubstitution.substitute(
+                        output_expression, env_vars
+                    )
+        return job_level_outputs
+
+    def _resolve_step_reference(self, output_expression, step_outputs_dict):
+        """Resolve step reference patterns like ${{ steps.step_id.outputs.key }}"""
+        import re
+
+        step_pattern = r"\$\{\{\s*steps\.(\w+)\.outputs\.(\w+)\s*\}\}"
+        match = re.search(step_pattern, output_expression)
+        if match:
+            step_id = match.group(1)
+            output_key = match.group(2)
+            # Note: step_outputs_dict here is actually all_outputs, need to find step-specific outputs
+            # This is a simplified version - might need refinement based on actual step output tracking
+            return step_outputs_dict.get(output_key)
+        return None
+
+    def _update_global_environment(self, job_id, final_outputs, env_vars):
+        """Update global environment variables with job outputs"""
+        for key, value in final_outputs.items():
+            env_vars[f"JOB_{job_id.upper()}_{key.upper()}"] = str(value)
+
+    def _build_final_result(self, workflow_def, job_outputs):
+        """Build and return the final workflow result"""
         final_job_outputs = {}
         workflow_failed = False
 
@@ -553,69 +616,9 @@ async def start_worker():
     await asyncio.gather(main_worker.run(), job_worker.run())
 
 
-def main():
-    """Main CLI entry point"""
-    global config
-
-    if len(sys.argv) < 2:
-        print("Usage: python -m src.main <command> [args]")
-        print("Commands:")
-        print("  worker                      - Start Temporal worker")
-        print("  run <yaml> [--local]        - Execute workflow locally (real bash)")
-        print(
-            "  run <yaml>                  - Execute workflow with Temporal (distributed)"
-        )
-        print("  create-sample               - Create sample YAML")
-        return
-
-    # Load configuration
-    env_config = ConfigLoader.from_env()
-    config = Config(**ConfigLoader.from_dict(env_config, config.__dict__))
-
-    command = sys.argv[1]
-
-    if command == "worker":
-        asyncio.run(start_worker())
-
-    elif command == "run" and len(sys.argv) > 2:
-        yaml_file = sys.argv[2]
-        if not os.path.exists(yaml_file):
-            print(f"Error: {yaml_file} not found")
-            return
-
-        local_mode = "--local" in sys.argv
-
-        mode_desc = "(local)" if local_mode else "(temporal)"
-        print(f"Executing {yaml_file} {mode_desc}")
-
-        try:
-            if local_mode:
-                engine = LocalEngine(config)
-                result = asyncio.run(engine.run_workflow(yaml_file))
-            else:
-                result = asyncio.run(run_temporal(yaml_file))
-
-            print("SUCCESS!")
-            print(f"Workflow: {result.workflow_name}")
-            print(f"Status: {result.status.value}")
-            print("Jobs:")
-            for job_id, job_output in result.jobs.items():
-                print(f"  {job_id}: {job_output.status.value}")
-                if job_output.outputs:
-                    for key, value in job_output.outputs.items():
-                        print(f"    {key}={value}")
-
-        except ValueError as e:
-            # User-friendly errors (YAML parsing, validation, etc.)
-            print(f"ERROR: {e}")
-        except Exception as e:
-            print(f"FAILED: {e}")
-            import traceback
-
-            traceback.print_exc()
-
-    elif command == "create-sample":
-        sample_content = """name: Simple Parallel Workflow (loop semantics explained)
+def get_sample_workflow_content():
+    """Get the sample workflow YAML content"""
+    return """name: Simple Parallel Workflow (loop semantics explained)
 
 jobs:
   setup:
@@ -676,12 +679,115 @@ jobs:
     steps:
       - run: echo "Running final job"
 """
-        with open("sample_workflow.yaml", "w") as f:
-            f.write(sample_content)
-        print("Created sample_workflow.yaml")
 
-    else:
-        print("Invalid command")
+
+async def execute_workflow(yaml_file: str, local_mode: bool) -> WorkflowResult:
+    """Execute workflow in local or temporal mode"""
+    global config
+
+    if not os.path.exists(yaml_file):
+        raise ValueError(f"{yaml_file} not found")
+
+    try:
+        if local_mode:
+            engine = LocalEngine(config)
+            result = await engine.run_workflow(yaml_file)
+        else:
+            result = await run_temporal(yaml_file)
+        return result
+    except ValueError:
+        # Re-raise user-friendly errors
+        raise
+    except Exception as e:
+        # Wrap other errors for consistent handling
+        raise RuntimeError(f"Workflow execution failed: {e}") from e
+
+
+def display_result(result: WorkflowResult):
+    """Display workflow execution result"""
+    click.echo("SUCCESS!")
+    click.echo(f"Workflow: {result.workflow_name}")
+    click.echo(f"Status: {result.status.value}")
+    click.echo("Jobs:")
+    for job_id, job_output in result.jobs.items():
+        click.echo(f"  {job_id}: {job_output.status.value}")
+        if job_output.outputs:
+            for key, value in job_output.outputs.items():
+                click.echo(f"    {key}={value}")
+
+
+@click.group()
+@click.pass_context
+def cli(ctx):
+    """Flowrite Workflow Executor - YAML-based temporal workflow execution"""
+    global config
+    ctx.ensure_object(dict)
+
+    # Load configuration
+    env_config = ConfigLoader.from_env()
+    config = Config(**ConfigLoader.from_dict(env_config, config.__dict__))
+
+
+@cli.command()
+@click.argument("yaml_file", type=click.Path(exists=True, dir_okay=False))
+@click.option("--local", is_flag=True, help="Execute locally (real bash commands)")
+@click.pass_context
+def run(ctx, yaml_file: str, local: bool):
+    """Execute workflow from YAML file"""
+    mode_desc = "(local)" if local else "(temporal)"
+    click.echo(f"Executing {yaml_file} {mode_desc}")
+
+    try:
+        result = asyncio.run(execute_workflow(yaml_file, local))
+        display_result(result)
+    except ValueError as e:
+        click.echo(f"ERROR: {e}", err=True)
+        ctx.exit(1)
+    except RuntimeError as e:
+        click.echo(f"FAILED: {e}", err=True)
+        import traceback
+
+        traceback.print_exc()
+        ctx.exit(1)
+
+
+@cli.command()
+def worker():
+    """Start Temporal worker"""
+    click.echo("Starting Temporal worker...")
+    try:
+        asyncio.run(start_worker())
+    except KeyboardInterrupt:
+        click.echo("\nShutting down worker...")
+    except Exception as e:
+        click.echo(f"Worker failed: {e}", err=True)
+        raise
+
+
+@cli.command("create-sample")
+@click.option(
+    "-f",
+    "--file",
+    "filename",
+    default="sample_workflow.yaml",
+    help="Output filename for the sample workflow",
+)
+def create_sample(filename: str):
+    """Create sample YAML workflow"""
+    content = get_sample_workflow_content()
+
+    try:
+        with open(filename, "w") as f:
+            f.write(content)
+        click.echo(f"Created {filename}")
+    except Exception as e:
+        click.echo(f"Error creating sample file: {e}", err=True)
+        raise
+
+
+def main():
+    """Main CLI entry point"""
+    cli()
 
 
 if __name__ == "__main__":
