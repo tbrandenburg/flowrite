@@ -1,0 +1,210 @@
+name: Step Sequences Example
+
+jobs:
+  preparation:
+    name: Preparation Phase
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.versioning.outputs.version }}
+      config_hash: ${{ steps.config.outputs.hash }}
+      dependencies_ready: ${{ steps.deps.outputs.ready }}
+    steps:
+      - name: Validate input parameters
+        run: |
+          echo "Validating deployment target: staging"
+          DEPLOYMENT_TARGET="staging"
+          if [[ "$DEPLOYMENT_TARGET" =~ ^(staging|production)$ ]]; then
+            echo "Valid deployment target"
+          else
+            echo "Invalid deployment target" && exit 1
+          fi
+
+      - name: Initialize environment variables
+        run: |
+          echo "TARGET_ENV=staging" >> "$GITHUB_ENV"
+          echo "DEPLOY_TIMESTAMP=$(date +%Y%m%d_%H%M%S)" >> "$GITHUB_ENV"
+          echo "WORKSPACE_ROOT=/tmp/flowrite-deploy" >> "$GITHUB_ENV"
+
+      - name: Create workspace structure
+        run: |
+          mkdir -p ${WORKSPACE_ROOT}/{source,build,config,logs}
+          echo "Workspace created at: ${WORKSPACE_ROOT}"
+          ls -la ${WORKSPACE_ROOT}
+
+      - name: Generate version information
+        id: versioning
+        run: |
+          DEPLOYMENT_TARGET="staging"
+          if [ "$DEPLOYMENT_TARGET" == "production" ]; then
+            VERSION="v1.$(date +%Y%m%d).$(date +%H%M)"
+          else
+            VERSION="v0.$(date +%Y%m%d).$(date +%H%M)-staging"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Generated version: $VERSION"
+
+      - name: Load configuration
+        id: config
+        run: |
+          echo "Loading configuration for ${TARGET_ENV}..."
+          CONFIG_CONTENT="database_url=postgres://localhost:5432/flowrite_${TARGET_ENV}"
+          CONFIG_HASH=$(echo "$CONFIG_CONTENT" | sha256sum | cut -d' ' -f1 | head -c 8)
+          echo "hash=$CONFIG_HASH" >> "$GITHUB_OUTPUT"
+          echo "Configuration loaded with hash: $CONFIG_HASH"
+
+      - name: Check dependencies
+        id: deps
+        run: |
+          echo "Checking system dependencies..."
+          
+          # Simulate dependency checks
+          DEPS=("python3" "pip" "git" "curl")
+          READY="true"
+          
+          for dep in "${DEPS[@]}"; do
+            if command -v "$dep" &> /dev/null; then
+              echo "✓ $dep is available"
+            else
+              echo "✗ $dep is missing"
+              READY="false"
+            fi
+          done
+          
+          echo "ready=$READY" >> "$GITHUB_OUTPUT"
+          echo "Dependencies check completed: $READY"
+
+  build_phase:
+    name: Build Phase
+    runs-on: ubuntu-latest
+    needs: preparation
+    if: needs.preparation.outputs.dependencies_ready == 'true'
+    steps:
+      - name: Setup build environment
+        run: |
+          echo "Setting up build for version: ${{ needs.preparation.outputs.version }}"
+          echo "Config hash: ${{ needs.preparation.outputs.config_hash }}"
+          echo "BUILD_VERSION=${{ needs.preparation.outputs.version }}" >> "$GITHUB_ENV"
+
+      - name: Source code preparation
+        run: |
+          echo "Preparing source code..."
+          echo "Creating mock source files..."
+          echo 'print("Hello from Flowrite!")' > ${WORKSPACE_ROOT}/source/main.py
+          echo '__version__ = "${{ needs.preparation.outputs.version }}"' > ${WORKSPACE_ROOT}/source/version.py
+
+      - name: Install build dependencies
+        run: |
+          echo "Installing build dependencies..."
+          sleep 1
+          echo "Dependencies installed successfully"
+
+      - name: Compile application
+        run: |
+          echo "Compiling application with version ${BUILD_VERSION}..."
+          sleep 2
+          echo "Application compiled successfully"
+          echo "BUILD_ARTIFACT=${WORKSPACE_ROOT}/build/flowrite-${BUILD_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Run static analysis
+        run: |
+          echo "Running static analysis..."
+          echo "Analyzing code quality..."
+          sleep 1
+          echo "Static analysis completed - no issues found"
+
+      - name: Execute unit tests
+        run: |
+          echo "Executing unit tests..."
+          echo "Running test suite..."
+          sleep 2
+          echo "All 15 unit tests passed"
+
+      - name: Generate build artifacts
+        run: |
+          echo "Generating build artifacts at ${BUILD_ARTIFACT}..."
+          mkdir -p "${BUILD_ARTIFACT}"
+          echo "Build completed at $(date)" > "${BUILD_ARTIFACT}/build.info"
+          echo "Build artifacts generated successfully"
+
+  testing_phase:
+    name: Testing Phase
+    runs-on: ubuntu-latest
+    needs: [preparation, build_phase]
+    steps:
+      - name: Setup test environment
+        run: |
+          echo "Setting up test environment..."
+          echo "Version under test: ${{ needs.preparation.outputs.version }}"
+
+      - name: Integration tests
+        run: |
+          echo "Running integration tests..."
+          echo "Testing database connections..."
+          sleep 1
+          echo "Testing API endpoints..."
+          sleep 1
+          echo "Integration tests completed successfully"
+
+      - name: Performance tests
+        run: |
+          echo "Running performance tests..."
+          echo "Load testing with 100 concurrent users..."
+          sleep 2
+          echo "Average response time: 245ms"
+          echo "Performance tests passed"
+
+      - name: Security scan
+        run: |
+          echo "Running security scan..."
+          echo "Scanning for vulnerabilities..."
+          sleep 1
+          echo "Security scan completed - no critical issues found"
+
+      - name: Generate test reports
+        run: |
+          echo "Generating test reports..."
+          echo "Test coverage: 92%"
+          echo "Security score: A+"
+          echo "Performance score: 8.5/10"
+
+  deployment_phase:
+    name: Deployment Phase
+    runs-on: ubuntu-latest
+    needs: [build_phase, testing_phase]
+    steps:
+      - name: Pre-deployment checks
+        run: |
+          echo "Running pre-deployment checks..."
+          echo "Target environment: staging"
+          echo "Version: ${{ needs.preparation.outputs.version }}"
+
+      - name: Database migrations
+        run: |
+          echo "Running database migrations..."
+          sleep 1
+          echo "Database schema updated successfully"
+
+      - name: Deploy application
+        run: |
+          echo "Deploying version ${{ needs.preparation.outputs.version }}..."
+          echo "Deployment target: staging"
+          sleep 2
+          echo "Application deployed successfully"
+
+      - name: Health checks
+        run: |
+          echo "Running post-deployment health checks..."
+          echo "Checking application startup..."
+          sleep 1
+          echo "Verifying endpoints..."
+          sleep 1
+          echo "All health checks passed"
+
+      - name: Deployment summary
+        run: |
+          echo "=== Deployment Summary ==="
+          echo "Version: ${{ needs.preparation.outputs.version }}"
+          echo "Environment: staging"
+          echo "Config Hash: ${{ needs.preparation.outputs.config_hash }}"
+          echo "Deployment Time: $(date -Iseconds)"
+          echo "Status: SUCCESS"

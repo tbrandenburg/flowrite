@@ -1,0 +1,333 @@
+name: Parallel Execution Example
+
+jobs:
+  setup:
+    name: Setup and Configuration
+    runs-on: ubuntu-latest
+    outputs:
+      run_frontend: ${{ steps.changes.outputs.frontend_changed }}
+      run_backend: ${{ steps.changes.outputs.backend_changed }}
+      run_docs: ${{ steps.changes.outputs.docs_changed }}
+      run_tests: ${{ steps.changes.outputs.tests_needed }}
+      build_matrix: ${{ steps.matrix.outputs.environments }}
+      cache_key: ${{ steps.cache.outputs.key }}
+    steps:
+      - name: Initialize workspace
+        run: |
+          echo "Initializing parallel execution workspace..."
+          mkdir -p {frontend,backend,docs,tests,cache}
+
+      - name: Detect changes
+        id: changes
+        run: |
+          # Simulate change detection
+          echo "Detecting changes in codebase..."
+          
+          # For demo purposes, we'll assume some changes
+          FRONTEND_CHANGED="true"
+          BACKEND_CHANGED="true" 
+          DOCS_CHANGED="false"
+          TESTS_NEEDED="true"
+          
+          echo "frontend_changed=$FRONTEND_CHANGED" >> "$GITHUB_OUTPUT"
+          echo "backend_changed=$BACKEND_CHANGED" >> "$GITHUB_OUTPUT"
+          echo "docs_changed=$DOCS_CHANGED" >> "$GITHUB_OUTPUT"
+          echo "tests_needed=$TESTS_NEEDED" >> "$GITHUB_OUTPUT"
+          
+          echo "Change detection completed:"
+          echo "  Frontend: $FRONTEND_CHANGED"
+          echo "  Backend: $BACKEND_CHANGED"
+          echo "  Docs: $DOCS_CHANGED"
+          echo "  Tests needed: $TESTS_NEEDED"
+
+      - name: Generate build matrix
+        id: matrix
+        run: |
+          # Create environment matrix for parallel builds
+          ENVIRONMENTS='["development", "staging", "production"]'
+          echo "environments=$ENVIRONMENTS" >> "$GITHUB_OUTPUT"
+          echo "Build matrix: $ENVIRONMENTS"
+
+      - name: Generate cache key
+        id: cache
+        run: |
+          TIMESTAMP=$(date +%Y%m%d-%H%M)
+          CACHE_KEY="flowrite-cache-$TIMESTAMP"
+          echo "key=$CACHE_KEY" >> "$GITHUB_OUTPUT"
+          echo "Cache key: $CACHE_KEY"
+
+  # Parallel job group 1: Core builds
+  frontend_build:
+    name: Frontend Build
+    runs-on: ubuntu-latest
+    needs: setup
+    if: needs.setup.outputs.run_frontend == 'true'
+    steps:
+      - name: Setup Node.js environment
+        run: |
+          echo "Setting up Node.js for frontend build..."
+          echo "NODE_VERSION=18.x" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: |
+          echo "Installing frontend dependencies..."
+          sleep 2
+          echo "Dependencies installed successfully"
+
+      - name: Build frontend assets
+        run: |
+          echo "Building frontend assets..."
+          echo "Compiling TypeScript..."
+          sleep 2
+          echo "Bundling assets..."
+          sleep 1
+          echo "Frontend build completed"
+
+      - name: Run frontend tests
+        run: |
+          echo "Running frontend unit tests..."
+          sleep 1
+          echo "Running component tests..."
+          sleep 1
+          echo "Frontend tests completed: 45/45 passed"
+
+  backend_build:
+    name: Backend Build
+    runs-on: ubuntu-latest
+    needs: setup
+    if: needs.setup.outputs.run_backend == 'true'
+    steps:
+      - name: Setup Python environment
+        run: |
+          echo "Setting up Python for backend build..."
+          echo "PYTHON_VERSION=3.11" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: |
+          echo "Installing backend dependencies..."
+          sleep 2
+          echo "Installing production packages..."
+          sleep 1
+          echo "Dependencies installed successfully"
+
+      - name: Build backend services
+        run: |
+          echo "Building backend services..."
+          echo "Compiling Python modules..."
+          sleep 2
+          echo "Generating API documentation..."
+          sleep 1
+          echo "Backend build completed"
+
+      - name: Run backend tests
+        run: |
+          echo "Running backend unit tests..."
+          sleep 2
+          echo "Running integration tests..."
+          sleep 1
+          echo "Backend tests completed: 78/78 passed"
+
+  database_setup:
+    name: Database Setup
+    runs-on: ubuntu-latest
+    needs: setup
+    if: needs.setup.outputs.run_backend == 'true'
+    steps:
+      - name: Initialize database
+        run: |
+          echo "Setting up database for testing..."
+          echo "Creating test database schema..."
+          sleep 1
+
+      - name: Run migrations
+        run: |
+          echo "Running database migrations..."
+          sleep 2
+          echo "Migrations completed successfully"
+
+      - name: Seed test data
+        run: |
+          echo "Seeding test data..."
+          sleep 1
+          echo "Test data loaded successfully"
+
+  # Parallel job group 2: Quality assurance
+  linting:
+    name: Code Linting
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - name: Setup linting tools
+        run: |
+          echo "Installing linting tools..."
+          sleep 1
+
+      - name: Lint frontend code
+        run: |
+          echo "Checking if frontend changes detected..."
+          if [ "${{ needs.setup.outputs.run_frontend }}" == "true" ]; then
+            echo "Linting frontend code..."
+            sleep 1
+            echo "Frontend linting completed: 0 errors, 2 warnings"
+          else
+            echo "Skipping frontend linting - no changes detected"
+          fi
+
+      - name: Lint backend code
+        run: |
+          echo "Checking if backend changes detected..."
+          if [ "${{ needs.setup.outputs.run_backend }}" == "true" ]; then
+            echo "Linting backend code..."
+            sleep 1
+            echo "Backend linting completed: 0 errors, 1 warning"
+          else
+            echo "Skipping backend linting - no changes detected"
+          fi
+
+  security_scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - name: Setup security tools
+        run: |
+          echo "Installing security scanning tools..."
+          sleep 1
+
+      - name: Dependency vulnerability scan
+        run: |
+          echo "Scanning dependencies for vulnerabilities..."
+          sleep 2
+          echo "Vulnerability scan completed: 0 critical, 1 low"
+
+      - name: Static security analysis
+        run: |
+          echo "Running static security analysis..."
+          sleep 2
+          echo "Security analysis completed: No issues found"
+
+  performance_tests:
+    name: Performance Testing
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - name: Setup performance testing
+        run: |
+          echo "Setting up performance testing environment..."
+          sleep 1
+
+      - name: Load testing
+        run: |
+          echo "Running load tests..."
+          echo "Simulating 100 concurrent users..."
+          sleep 3
+          echo "Load testing completed: Average response 150ms"
+
+      - name: Memory usage analysis
+        run: |
+          echo "Analyzing memory usage patterns..."
+          sleep 1
+          echo "Memory analysis completed: Peak usage 85MB"
+
+  # Parallel job group 3: Documentation and artifacts
+  documentation:
+    name: Documentation Build
+    runs-on: ubuntu-latest
+    needs: setup
+    if: needs.setup.outputs.run_docs == 'true'
+    steps:
+      - name: Setup documentation tools
+        run: |
+          echo "Installing documentation generators..."
+          sleep 1
+
+      - name: Generate API docs
+        run: |
+          echo "Generating API documentation..."
+          sleep 2
+          echo "API documentation generated"
+
+      - name: Build user guides
+        run: |
+          echo "Building user guides..."
+          sleep 1
+          echo "User guides built successfully"
+
+  artifact_creation:
+    name: Artifact Creation
+    runs-on: ubuntu-latest
+    needs: [setup, frontend_build, backend_build]
+    if: always() && (needs.frontend_build.result == 'success' || needs.backend_build.result == 'success')
+    steps:
+      - name: Collect build artifacts
+        run: |
+          echo "Collecting build artifacts..."
+          echo "Cache key: ${{ needs.setup.outputs.cache_key }}"
+          sleep 1
+
+      - name: Create deployment packages
+        run: |
+          echo "Creating deployment packages..."
+          if [ "${{ needs.frontend_build.result }}" == "success" ]; then
+            echo "Frontend package created"
+          fi
+          if [ "${{ needs.backend_build.result }}" == "success" ]; then
+            echo "Backend package created"
+          fi
+
+      - name: Generate checksums
+        run: |
+          echo "Generating package checksums..."
+          sleep 1
+          echo "Checksums generated and verified"
+
+  # Final aggregation job
+  integration_verification:
+    name: Integration Verification
+    runs-on: ubuntu-latest
+    needs: [
+      setup,
+      frontend_build,
+      backend_build,
+      database_setup,
+      linting,
+      security_scan,
+      performance_tests
+    ]
+    if: always()
+    steps:
+      - name: Verify parallel execution results
+        run: |
+          echo "=== Parallel Execution Summary ==="
+          echo "Setup: ${{ needs.setup.result }}"
+          echo "Frontend Build: ${{ needs.frontend_build.result }}"
+          echo "Backend Build: ${{ needs.backend_build.result }}"
+          echo "Database Setup: ${{ needs.database_setup.result }}"
+          echo "Linting: ${{ needs.linting.result }}"
+          echo "Security Scan: ${{ needs.security_scan.result }}"
+          echo "Performance Tests: ${{ needs.performance_tests.result }}"
+
+      - name: Integration health check
+        run: |
+          echo "Running integration health checks..."
+          
+          # Check if critical jobs succeeded
+          FRONTEND_OK="${{ needs.frontend_build.result == 'success' || needs.setup.outputs.run_frontend == 'false' }}"
+          BACKEND_OK="${{ needs.backend_build.result == 'success' || needs.setup.outputs.run_backend == 'false' }}"
+          
+          if [ "$FRONTEND_OK" == "true" ] && [ "$BACKEND_OK" == "true" ]; then
+            echo "✅ Integration verification PASSED"
+            echo "All critical components built successfully"
+          else
+            echo "❌ Integration verification FAILED"
+            echo "One or more critical builds failed"
+            exit 1
+          fi
+
+      - name: Deployment readiness
+        run: |
+          echo "=== Deployment Readiness ==="
+          echo "Cache Key: ${{ needs.setup.outputs.cache_key }}"
+          echo "Build Matrix: ${{ needs.setup.outputs.build_matrix }}"
+          echo "✅ Ready for deployment"
+          echo "All parallel jobs completed successfully"

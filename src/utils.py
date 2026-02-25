@@ -64,7 +64,10 @@ class BashExecutor:
         self.timeout = timeout
 
     def execute(
-        self, command: str, env_vars: Dict[str, str] = None, working_dir: str = None
+        self,
+        command: str,
+        env_vars: Optional[Dict[str, str]] = None,
+        working_dir: Optional[str] = None,
     ) -> Tuple[bool, str, str, Dict[str, str]]:
         """
         Execute bash command and return (success, stdout, stderr, env_updates)
@@ -138,10 +141,10 @@ echo "=== END ==="
             return False, "", str(e), {}
 
     def execute_simulation(
-        self, command: str, env_vars: Dict[str, str] = None
+        self, command: str, env_vars: Optional[Dict[str, str]] = None
     ) -> Tuple[bool, Dict[str, str]]:
         """
-        Simulate command execution for testing (parse outputs only)
+        Simulate command execution for testing with proper variable expansion
         """
         if not command.strip():
             return True, {}
@@ -155,39 +158,199 @@ echo "=== END ==="
 
         logger.info(f"SIMULATION: {command}")
 
-        # Parse outputs from command text (don't actually run)
+        # Simulate bash variable expansion and command execution
+        sim_env = dict(env_vars)  # Copy the environment
         outputs = {}
-        env_updates = {}
 
-        # Parse GITHUB_OUTPUT patterns
-        for line in command.split("\n"):
-            line = line.strip()
-            if "GITHUB_OUTPUT" in line and 'echo "' in line:
+        # Process commands line by line to simulate bash execution
+        lines = command.split("\n")
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            i += 1
+
+            if not line or line.startswith("#"):
+                continue
+
+            # Handle simple if statements
+            if line.startswith("if ") and line.endswith("; then"):
+                # Extract condition and find matching fi
+                condition = line[3:-6].strip()  # Remove 'if ' and '; then'
+                then_lines = []
+                else_lines = []
+                in_else = False
+
+                # Collect lines until 'fi'
+                while i < len(lines):
+                    current_line = lines[i].strip()
+                    i += 1
+
+                    if current_line == "fi":
+                        break
+                    elif current_line == "else":
+                        in_else = True
+                        continue
+
+                    if in_else:
+                        else_lines.append(current_line)
+                    else:
+                        then_lines.append(current_line)
+
+                # Evaluate condition (simple pattern matching)
+                condition_met = self._evaluate_bash_condition(condition, sim_env)
+
+                # Execute appropriate block
+                block_to_execute = then_lines if condition_met else else_lines
+                for block_line in block_to_execute:
+                    if (
+                        "=" in block_line
+                        and not block_line.startswith("echo")
+                        and ">>" not in block_line
+                    ):
+                        # Process variable assignment
+                        self._process_variable_assignment(block_line, sim_env)
+                continue
+
+            # Simulate variable assignments (VAR=value or VAR="value")
+            if "=" in line and not line.startswith("echo") and ">>" not in line:
+                self._process_variable_assignment(line, sim_env)
+
+            # Parse GITHUB_OUTPUT patterns with variable expansion
+            elif "GITHUB_OUTPUT" in line and 'echo "' in line:
+                self._process_github_output(line, sim_env, outputs)
+
+            # Parse GITHUB_ENV patterns with variable expansion
+            elif "GITHUB_ENV" in line and 'echo "' in line:
+                self._process_github_env(line, sim_env, outputs)
+
+        return True, outputs
+
+    def _evaluate_bash_condition(self, condition: str, sim_env: Dict[str, str]) -> bool:
+        """Evaluate simple bash conditions"""
+        # Expand variables in condition
+        condition = VariableSubstitution.substitute(condition, sim_env)
+
+        # Handle pattern matching like [[ "$VAR" =~ ^(val1|val2)$ ]]
+        if "=~" in condition:
+            # Simple regex pattern matching
+            import re
+
+            parts = condition.split("=~", 1)
+            if len(parts) == 2:
+                left = parts[0].strip().strip("\"'[]")
+                right = parts[1].strip().strip("\"'[]^$")
+
+                # Convert bash pattern to regex
+                pattern = right.replace("(", "(").replace(")", ")").replace("|", "|")
                 try:
-                    start = line.find('echo "') + 6
-                    end = line.find('"', start)
-                    if start > 5 and end > start:
-                        content = line[start:end]
-                        if "=" in content:
-                            key, value = content.split("=", 1)
-                            outputs[key.strip()] = value.strip()
+                    return bool(re.match(pattern, left))
                 except:
                     pass
 
-            # Parse GITHUB_ENV patterns
-            if "GITHUB_ENV" in line and 'echo "' in line:
-                try:
-                    start = line.find('echo "') + 6
-                    end = line.find('"', start)
-                    if start > 5 and end > start:
-                        content = line[start:end]
-                        if "=" in content:
-                            key, value = content.split("=", 1)
-                            env_updates[key.strip()] = value.strip()
-                except:
-                    pass
+        # Handle equality checks
+        if "==" in condition:
+            parts = condition.split("==", 1)
+            if len(parts) == 2:
+                left = parts[0].strip().strip("\"'[]")
+                right = parts[1].strip().strip("\"'")
+                return left == right
 
-        return True, {**outputs, **env_updates}
+        # Default to true for unknown conditions
+        return True
+
+    def _process_variable_assignment(self, line: str, sim_env: Dict[str, str]):
+        """Process a variable assignment line"""
+        try:
+            # Handle variable assignment
+            if line.startswith("export "):
+                line = line[7:]  # Remove 'export '
+
+            var_name, value = line.split("=", 1)
+            var_name = var_name.strip()
+
+            # Remove quotes if present
+            if (value.startswith('"') and value.endswith('"')) or (
+                value.startswith("'") and value.endswith("'")
+            ):
+                value = value[1:-1]
+
+            # Expand variables in the value using current sim_env
+            value = VariableSubstitution.substitute(value, sim_env)
+
+            # Handle command substitution like $(date +%s)
+            if "$(" in value:
+                # Simple simulation of common commands
+                import time
+                import hashlib
+
+                replacements = {
+                    "$(date +%s)": str(int(time.time())),
+                    "$(date +%Y%m%d_%H%M%S)": time.strftime("%Y%m%d_%H%M%S"),
+                    "$(date +%Y%m%d)": time.strftime("%Y%m%d"),
+                    "$(date +%H%M)": time.strftime("%H%M"),
+                    "$(date -Iseconds)": time.strftime("%Y-%m-%dT%H:%M:%S%z")
+                    or time.strftime("%Y-%m-%dT%H:%M:%S"),
+                }
+
+                # Handle simple hash commands
+                import re
+
+                hash_pattern = r'\$\(echo "([^"]*)" \| sha256sum \| cut -d\' \' -f1 \| head -c (\d+)\)'
+                match = re.search(hash_pattern, value)
+                if match:
+                    text_to_hash = match.group(1)
+                    # Expand variables in the text to hash
+                    text_to_hash = VariableSubstitution.substitute(
+                        text_to_hash, sim_env
+                    )
+                    hash_length = int(match.group(2))
+                    hash_value = hashlib.sha256(text_to_hash.encode()).hexdigest()[
+                        :hash_length
+                    ]
+                    value = re.sub(hash_pattern, hash_value, value)
+
+                # Apply other replacements
+                for pattern, replacement in replacements.items():
+                    value = value.replace(pattern, replacement)
+
+            sim_env[var_name] = value
+        except:
+            pass
+
+    def _process_github_output(
+        self, line: str, sim_env: Dict[str, str], outputs: Dict[str, str]
+    ):
+        """Process GITHUB_OUTPUT line"""
+        try:
+            start = line.find('echo "') + 6
+            end = line.find('"', start)
+            if start > 5 and end > start:
+                content = line[start:end]
+                # Expand variables in the content
+                content = VariableSubstitution.substitute(content, sim_env)
+                if "=" in content:
+                    key, value = content.split("=", 1)
+                    outputs[key.strip()] = value.strip()
+        except:
+            pass
+
+    def _process_github_env(
+        self, line: str, sim_env: Dict[str, str], outputs: Dict[str, str]
+    ):
+        """Process GITHUB_ENV line"""
+        try:
+            start = line.find('echo "') + 6
+            end = line.find('"', start)
+            if start > 5 and end > start:
+                content = line[start:end]
+                # Expand variables in the content
+                content = VariableSubstitution.substitute(content, sim_env)
+                if "=" in content:
+                    key, value = content.split("=", 1)
+                    outputs[key.strip()] = value.strip()
+                    sim_env[key.strip()] = value.strip()  # Also update sim environment
+        except:
+            pass
 
     def _parse_special_outputs(self, stdout: str) -> Dict[str, str]:
         """Parse GITHUB_OUTPUT and GITHUB_ENV from command output"""
@@ -250,7 +413,7 @@ class ConfigLoader:
 
     @staticmethod
     def from_dict(
-        config_dict: Dict[str, Any], defaults: Dict[str, Any] = None
+        config_dict: Dict[str, Any], defaults: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """Merge config with defaults"""
         result = defaults.copy() if defaults else {}

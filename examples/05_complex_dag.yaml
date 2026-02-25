@@ -1,0 +1,510 @@
+name: Complex DAG Example
+
+jobs:
+  # Root nodes - initial setup
+  environment_setup:
+    name: Environment Setup
+    runs-on: ubuntu-latest
+    outputs:
+      env_name: ${{ steps.config.outputs.env_name }}
+      canary_enabled: ${{ steps.config.outputs.canary_enabled }}
+      performance_tests: ${{ steps.config.outputs.performance_tests }}
+      infrastructure_ready: ${{ steps.infra.outputs.ready }}
+      config_hash: ${{ steps.config.outputs.hash }}
+    steps:
+      - name: Configure environment
+        id: config
+        run: |
+          ENV_NAME="staging"
+          CANARY="false"
+          PERF_TESTS="true"
+          
+          echo "env_name=$ENV_NAME" >> "$GITHUB_OUTPUT"
+          echo "canary_enabled=$CANARY" >> "$GITHUB_OUTPUT"
+          echo "performance_tests=$PERF_TESTS" >> "$GITHUB_OUTPUT"
+          
+          CONFIG_HASH=$(echo "${ENV_NAME}-${CANARY}-${PERF_TESTS}" | sha256sum | cut -c1-8)
+          echo "hash=$CONFIG_HASH" >> "$GITHUB_OUTPUT"
+          
+          echo "Environment: $ENV_NAME"
+          echo "Canary deployment: $CANARY"  
+          echo "Performance tests: $PERF_TESTS"
+          echo "Config hash: $CONFIG_HASH"
+
+      - name: Setup infrastructure
+        id: infra
+        run: |
+          echo "Setting up infrastructure for ${{ steps.config.outputs.env_name }}..."
+          sleep 1
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "Infrastructure ready"
+
+  security_scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    # Independent of environment setup - can run in parallel
+    outputs:
+      security_passed: ${{ steps.scan.outputs.passed }}
+      vulnerabilities: ${{ steps.scan.outputs.vuln_count }}
+    steps:
+      - name: Run security scan
+        id: scan
+        run: |
+          echo "Running comprehensive security scan..."
+          sleep 2
+          
+          # Simulate finding some vulnerabilities
+          VULN_COUNT=2
+          PASSED="true"  # Non-critical vulnerabilities
+          
+          echo "passed=$PASSED" >> "$GITHUB_OUTPUT"
+          echo "vuln_count=$VULN_COUNT" >> "$GITHUB_OUTPUT"
+          echo "Security scan completed: $VULN_COUNT vulnerabilities found"
+
+  # First level dependencies
+  source_preparation:
+    name: Source Code Preparation  
+    runs-on: ubuntu-latest
+    needs: [environment_setup, security_scan]
+    if: needs.security_scan.outputs.security_passed == 'true'
+    outputs:
+      source_hash: ${{ steps.prep.outputs.hash }}
+      build_ready: ${{ steps.prep.outputs.ready }}
+    steps:
+      - name: Prepare source code
+        id: prep
+        run: |
+          echo "Preparing source for environment: ${{ needs.environment_setup.outputs.env_name }}"
+          sleep 1
+          SOURCE_HASH=$(date +%s | sha256sum | cut -c1-8)
+          echo "hash=$SOURCE_HASH" >> "$GITHUB_OUTPUT"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "Source prepared with hash: $SOURCE_HASH"
+
+  dependency_resolution:
+    name: Dependency Resolution
+    runs-on: ubuntu-latest
+    needs: environment_setup
+    outputs:
+      deps_hash: ${{ steps.resolve.outputs.hash }}
+      cache_hit: ${{ steps.resolve.outputs.cache_hit }}
+    steps:
+      - name: Resolve dependencies
+        id: resolve
+        run: |
+          echo "Resolving dependencies for ${{ needs.environment_setup.outputs.env_name }}..."
+          sleep 2
+          
+          DEPS_HASH="deps-${{ needs.environment_setup.outputs.config_hash }}"
+          CACHE_HIT="false"  # Simulate cache miss
+          
+          echo "hash=$DEPS_HASH" >> "$GITHUB_OUTPUT"
+          echo "cache_hit=$CACHE_HIT" >> "$GITHUB_OUTPUT"
+          echo "Dependencies resolved: $DEPS_HASH"
+
+  # Fan-out: Multiple parallel build paths
+  frontend_build:
+    name: Frontend Build
+    runs-on: ubuntu-latest
+    needs: [source_preparation, dependency_resolution]
+    outputs:
+      build_artifact: ${{ steps.build.outputs.artifact }}
+      build_size: ${{ steps.build.outputs.size }}
+    steps:
+      - name: Build frontend
+        id: build
+        run: |
+          echo "Building frontend..."
+          echo "Source: ${{ needs.source_preparation.outputs.source_hash }}"
+          echo "Dependencies: ${{ needs.dependency_resolution.outputs.deps_hash }}"
+          sleep 2
+          
+          ARTIFACT="frontend-${{ needs.source_preparation.outputs.source_hash }}"
+          SIZE="2.4MB"
+          
+          echo "artifact=$ARTIFACT" >> "$GITHUB_OUTPUT"
+          echo "size=$SIZE" >> "$GITHUB_OUTPUT"
+          echo "Frontend built: $ARTIFACT ($SIZE)"
+
+  backend_build:
+    name: Backend Build
+    runs-on: ubuntu-latest  
+    needs: [source_preparation, dependency_resolution]
+    outputs:
+      build_artifact: ${{ steps.build.outputs.artifact }}
+      build_size: ${{ steps.build.outputs.size }}
+    steps:
+      - name: Build backend
+        id: build
+        run: |
+          echo "Building backend..."
+          echo "Source: ${{ needs.source_preparation.outputs.source_hash }}"
+          echo "Dependencies: ${{ needs.dependency_resolution.outputs.deps_hash }}"
+          sleep 2
+          
+          ARTIFACT="backend-${{ needs.source_preparation.outputs.source_hash }}"
+          SIZE="15.7MB"
+          
+          echo "artifact=$ARTIFACT" >> "$GITHUB_OUTPUT" 
+          echo "size=$SIZE" >> "$GITHUB_OUTPUT"
+          echo "Backend built: $ARTIFACT ($SIZE)"
+
+  database_migrations:
+    name: Database Migrations
+    runs-on: ubuntu-latest
+    needs: [environment_setup, source_preparation]
+    if: needs.environment_setup.outputs.env_name != 'development'
+    outputs:
+      migration_version: ${{ steps.migrate.outputs.version }}
+    steps:
+      - name: Run database migrations
+        id: migrate
+        run: |
+          echo "Running migrations for ${{ needs.environment_setup.outputs.env_name }}..."
+          sleep 1
+          
+          VERSION="v$(date +%Y%m%d%H%M)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Migrations completed: $VERSION"
+
+  # Cross-cutting concern: monitoring setup
+  monitoring_setup:
+    name: Monitoring Setup
+    runs-on: ubuntu-latest
+    needs: environment_setup
+    outputs:
+      monitoring_ready: ${{ steps.setup.outputs.ready }}
+    steps:
+      - name: Configure monitoring
+        id: setup
+        run: |
+          echo "Setting up monitoring for ${{ needs.environment_setup.outputs.env_name }}..."
+          sleep 1
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "Monitoring configured"
+
+  # Second level tests - depend on builds
+  unit_tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: [frontend_build, backend_build]
+    outputs:
+      test_results: ${{ steps.test.outputs.results }}
+      coverage: ${{ steps.test.outputs.coverage }}
+    steps:
+      - name: Run unit tests
+        id: test
+        run: |
+          echo "Running unit tests..."
+          echo "Frontend artifact: ${{ needs.frontend_build.outputs.build_artifact }}"
+          echo "Backend artifact: ${{ needs.backend_build.outputs.build_artifact }}"
+          sleep 2
+          
+          RESULTS="passed"
+          COVERAGE="87%"
+          
+          echo "results=$RESULTS" >> "$GITHUB_OUTPUT"
+          echo "coverage=$COVERAGE" >> "$GITHUB_OUTPUT"
+          echo "Unit tests $RESULTS with $COVERAGE coverage"
+
+  integration_tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [frontend_build, backend_build, database_migrations, monitoring_setup]
+    # Only run if database migrations completed OR we're in development
+    if: always() && (needs.database_migrations.result == 'success' || needs.database_migrations.result == 'skipped')
+    outputs:
+      integration_results: ${{ steps.test.outputs.results }}
+    steps:
+      - name: Run integration tests
+        id: test
+        run: |
+          echo "Running integration tests..."
+          echo "Database version: ${{ needs.database_migrations.outputs.migration_version || 'dev-local' }}"
+          echo "Monitoring ready: ${{ needs.monitoring_setup.outputs.monitoring_ready }}"
+          sleep 3
+          
+          RESULTS="passed"
+          echo "results=$RESULTS" >> "$GITHUB_OUTPUT"
+          echo "Integration tests $RESULTS"
+
+  # Conditional performance testing
+  performance_tests:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    needs: [environment_setup, frontend_build, backend_build]
+    if: needs.environment_setup.outputs.performance_tests == 'true'
+    outputs:
+      perf_results: ${{ steps.test.outputs.results }}
+      response_time: ${{ steps.test.outputs.avg_response }}
+    steps:
+      - name: Run performance tests
+        id: test
+        run: |
+          echo "Running performance tests..."
+          echo "Environment: ${{ needs.environment_setup.outputs.env_name }}"
+          sleep 4
+          
+          RESULTS="passed"
+          AVG_RESPONSE="245ms"
+          
+          echo "results=$RESULTS" >> "$GITHUB_OUTPUT"
+          echo "avg_response=$AVG_RESPONSE" >> "$GITHUB_OUTPUT"
+          echo "Performance tests $RESULTS (avg: $AVG_RESPONSE)"
+
+  # Environment-specific staging deployment
+  staging_deployment:
+    name: Staging Deployment
+    runs-on: ubuntu-latest
+    needs: [
+      environment_setup,
+      unit_tests,
+      integration_tests,
+      performance_tests
+    ]
+    # Only deploy to staging if it's not production and tests pass
+    if: |
+      needs.environment_setup.outputs.env_name != 'production' && 
+      needs.unit_tests.outputs.test_results == 'passed' &&
+      needs.integration_tests.outputs.integration_results == 'passed' &&
+      (needs.performance_tests.result == 'success' || needs.performance_tests.result == 'skipped')
+    outputs:
+      deployment_url: ${{ steps.deploy.outputs.url }}
+    steps:
+      - name: Deploy to staging
+        id: deploy
+        run: |
+          echo "Deploying to staging environment..."
+          sleep 2
+          
+          URL="https://staging-${{ needs.environment_setup.outputs.config_hash }}.example.com"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Deployed to: $URL"
+
+  # Canary deployment path
+  canary_preparation:
+    name: Canary Preparation
+    runs-on: ubuntu-latest
+    needs: [environment_setup, staging_deployment]
+    if: |
+      needs.environment_setup.outputs.canary_enabled == 'true' &&
+      needs.staging_deployment.result == 'success'
+    outputs:
+      canary_ready: ${{ steps.prep.outputs.ready }}
+    steps:
+      - name: Prepare canary deployment
+        id: prep
+        run: |
+          echo "Preparing canary deployment..."
+          sleep 1
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "Canary preparation complete"
+
+  canary_deployment:
+    name: Canary Deployment
+    runs-on: ubuntu-latest
+    needs: [environment_setup, canary_preparation]
+    if: needs.canary_preparation.outputs.canary_ready == 'true'
+    outputs:
+      canary_url: ${{ steps.deploy.outputs.url }}
+      traffic_split: ${{ steps.deploy.outputs.split }}
+    steps:
+      - name: Deploy canary version
+        id: deploy
+        run: |
+          echo "Deploying canary version..."
+          sleep 2
+          
+          URL="https://canary-${{ needs.environment_setup.outputs.config_hash }}.example.com"
+          SPLIT="10%"
+          
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "split=$SPLIT" >> "$GITHUB_OUTPUT"
+          echo "Canary deployed: $URL ($SPLIT traffic)"
+
+  # Production deployment - multiple dependencies
+  production_deployment:
+    name: Production Deployment
+    runs-on: ubuntu-latest
+    needs: [
+      environment_setup,
+      unit_tests,
+      integration_tests,
+      performance_tests,
+      staging_deployment,
+      canary_deployment
+    ]
+    # Complex condition for production deployment
+    if: |
+      needs.environment_setup.outputs.env_name == 'production' &&
+      needs.unit_tests.outputs.test_results == 'passed' &&
+      needs.integration_tests.outputs.integration_results == 'passed' &&
+      needs.performance_tests.outputs.perf_results == 'passed' &&
+      (needs.canary_deployment.result == 'success' || needs.canary_deployment.result == 'skipped')
+    outputs:
+      prod_url: ${{ steps.deploy.outputs.url }}
+    steps:
+      - name: Deploy to production
+        id: deploy
+        run: |
+          echo "Deploying to production..."
+          echo "All prerequisites validated"
+          sleep 3
+          
+          URL="https://app.example.com"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Production deployment complete: $URL"
+
+  # Post-deployment verification
+  smoke_tests:
+    name: Smoke Tests
+    runs-on: ubuntu-latest
+    needs: [staging_deployment, canary_deployment, production_deployment]
+    # Run if any deployment succeeded
+    if: |
+      always() &&
+      (needs.staging_deployment.result == 'success' || 
+       needs.canary_deployment.result == 'success' || 
+       needs.production_deployment.result == 'success')
+    steps:
+      - name: Run smoke tests
+        run: |
+          echo "Running post-deployment smoke tests..."
+          
+          # Test staging if deployed
+          if [ "${{ needs.staging_deployment.result }}" == "success" ]; then
+            echo "Testing staging: ${{ needs.staging_deployment.outputs.deployment_url }}"
+          fi
+          
+          # Test canary if deployed  
+          if [ "${{ needs.canary_deployment.result }}" == "success" ]; then
+            echo "Testing canary: ${{ needs.canary_deployment.outputs.canary_url }}"
+            echo "Traffic split: ${{ needs.canary_deployment.outputs.traffic_split }}"
+          fi
+          
+          # Test production if deployed
+          if [ "${{ needs.production_deployment.result }}" == "success" ]; then
+            echo "Testing production: ${{ needs.production_deployment.outputs.prod_url }}"
+          fi
+          
+          sleep 2
+          echo "All smoke tests passed"
+
+  # Final aggregation and cleanup
+  deployment_summary:
+    name: Deployment Summary
+    runs-on: ubuntu-latest
+    needs: [
+      environment_setup,
+      security_scan,
+      source_preparation,
+      dependency_resolution,
+      frontend_build,
+      backend_build,
+      database_migrations,
+      monitoring_setup,
+      unit_tests,
+      integration_tests,
+      performance_tests,
+      staging_deployment,
+      canary_deployment,
+      production_deployment,
+      smoke_tests
+    ]
+    if: always()
+    steps:
+      - name: Generate comprehensive summary
+        run: |
+          echo "=== Complex DAG Execution Summary ==="
+          echo ""
+          echo "Configuration:"
+          echo "  Environment: ${{ needs.environment_setup.outputs.env_name }}"
+          echo "  Canary enabled: ${{ needs.environment_setup.outputs.canary_enabled }}"
+          echo "  Performance tests: ${{ needs.environment_setup.outputs.performance_tests }}"
+          echo "  Config hash: ${{ needs.environment_setup.outputs.config_hash }}"
+          echo ""
+          
+          echo "Security & Preparation:"
+          echo "  Security scan: ${{ needs.security_scan.result }} (${{ needs.security_scan.outputs.vulnerabilities }} vulns)"
+          echo "  Source preparation: ${{ needs.source_preparation.result }}"
+          echo "  Dependency resolution: ${{ needs.dependency_resolution.result }}"
+          echo ""
+          
+          echo "Build Results:"
+          echo "  Frontend: ${{ needs.frontend_build.result }} (${{ needs.frontend_build.outputs.build_size }})"
+          echo "  Backend: ${{ needs.backend_build.result }} (${{ needs.backend_build.outputs.build_size }})"
+          echo "  Database migrations: ${{ needs.database_migrations.result }}"
+          echo ""
+          
+          echo "Testing Results:"
+          echo "  Unit tests: ${{ needs.unit_tests.result }} (${{ needs.unit_tests.outputs.coverage }} coverage)"
+          echo "  Integration tests: ${{ needs.integration_tests.result }}"
+          echo "  Performance tests: ${{ needs.performance_tests.result }}"
+          if [ "${{ needs.performance_tests.result }}" == "success" ]; then
+            echo "    Average response: ${{ needs.performance_tests.outputs.response_time }}"
+          fi
+          echo ""
+          
+          echo "Deployment Results:"
+          echo "  Staging: ${{ needs.staging_deployment.result }}"
+          if [ "${{ needs.staging_deployment.result }}" == "success" ]; then
+            echo "    URL: ${{ needs.staging_deployment.outputs.deployment_url }}"
+          fi
+          echo "  Canary: ${{ needs.canary_deployment.result }}"
+          if [ "${{ needs.canary_deployment.result }}" == "success" ]; then
+            echo "    URL: ${{ needs.canary_deployment.outputs.canary_url }}"
+            echo "    Traffic split: ${{ needs.canary_deployment.outputs.traffic_split }}"
+          fi
+          echo "  Production: ${{ needs.production_deployment.result }}"
+          if [ "${{ needs.production_deployment.result }}" == "success" ]; then
+            echo "    URL: ${{ needs.production_deployment.outputs.prod_url }}"
+          fi
+          echo ""
+          
+          echo "Post-deployment:"
+          echo "  Smoke tests: ${{ needs.smoke_tests.result }}"
+          echo ""
+          
+          # Count successful jobs
+          TOTAL_JOBS=16
+          SUCCESS_COUNT=0
+          
+          for result in \
+            "${{ needs.environment_setup.result }}" \
+            "${{ needs.security_scan.result }}" \
+            "${{ needs.source_preparation.result }}" \
+            "${{ needs.dependency_resolution.result }}" \
+            "${{ needs.frontend_build.result }}" \
+            "${{ needs.backend_build.result }}" \
+            "${{ needs.monitoring_setup.result }}" \
+            "${{ needs.unit_tests.result }}" \
+            "${{ needs.integration_tests.result }}" \
+            "${{ needs.smoke_tests.result }}"
+          do
+            [ "$result" == "success" ] && SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+          done
+          
+          echo "Overall Statistics:"
+          echo "  Successful jobs: $SUCCESS_COUNT/$TOTAL_JOBS"
+          echo "  Success rate: $(( SUCCESS_COUNT * 100 / TOTAL_JOBS ))%"
+          
+          if [ $SUCCESS_COUNT -ge 8 ]; then
+            echo "  Status: ✅ COMPLEX DAG COMPLETED SUCCESSFULLY"
+          else
+            echo "  Status: ⚠️  SOME JOBS FAILED - REVIEW REQUIRED"
+          fi
+
+  # Cleanup resources
+  cleanup:
+    name: Cleanup Resources
+    runs-on: ubuntu-latest
+    needs: [deployment_summary]
+    if: always()
+    steps:
+      - name: Cleanup temporary resources
+        run: |
+          echo "Cleaning up temporary resources..."
+          echo "Removing build artifacts..."
+          echo "Cleaning cache entries..."
+          sleep 1
+          echo "Cleanup completed"

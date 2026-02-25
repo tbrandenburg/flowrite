@@ -1,0 +1,308 @@
+name: Loop Execution Example
+
+jobs:
+  initialization:
+    name: Initialize Loop Environment
+    runs-on: ubuntu-latest
+    outputs:
+      service_ready: ${{ steps.check.outputs.ready }}
+      retry_count: ${{ steps.setup.outputs.max_retries }}
+      poll_interval: ${{ steps.setup.outputs.poll_seconds }}
+    steps:
+      - name: Setup loop parameters
+        id: setup
+        run: |
+          MAX_RETRIES="3"
+          POLL_SECONDS="30"
+          echo "max_retries=$MAX_RETRIES" >> "$GITHUB_OUTPUT"
+          echo "poll_seconds=$POLL_SECONDS" >> "$GITHUB_OUTPUT"
+          echo "Configured max retries: $MAX_RETRIES"
+          echo "Configured poll duration: $POLL_SECONDS seconds"
+
+      - name: Initial service check
+        id: check
+        run: |
+          echo "Checking initial service status..."
+          # Simulate service might be down initially
+          SERVICE_STATUS="down"
+          echo "ready=false" >> "$GITHUB_OUTPUT"
+          echo "Service initial status: $SERVICE_STATUS"
+
+  # Job-level loop example (retry semantics)
+  unstable_service_job:
+    name: Unstable Service with Job-Level Retry
+    runs-on: ubuntu-latest
+    needs: initialization
+    
+    # Job-level loop configuration
+    loop:
+      until: success()  # Retry until the entire job succeeds
+      max_iterations: ${{ needs.initialization.outputs.retry_count }}
+    
+    steps:
+      - name: Job attempt start
+        run: |
+          echo "Starting unstable service job attempt..."
+          echo "Maximum iterations: ${{ needs.initialization.outputs.retry_count }}"
+          echo "ATTEMPT_NUMBER=${GITHUB_RUN_ATTEMPT:-1}" >> "$GITHUB_ENV"
+
+      - name: Simulate unstable operation
+        run: |
+          echo "Attempt #${ATTEMPT_NUMBER}: Running unstable operation..."
+          
+          # Simulate a service that fails 2 out of 3 times
+          RANDOM_NUM=$((RANDOM % 3))
+          if [ $RANDOM_NUM -eq 0 ]; then
+            echo "✅ Operation succeeded on attempt ${ATTEMPT_NUMBER}"
+            echo "SERVICE_STATUS=success" >> "$GITHUB_ENV"
+          else
+            echo "❌ Operation failed on attempt ${ATTEMPT_NUMBER}"
+            echo "SERVICE_STATUS=failed" >> "$GITHUB_ENV"
+            echo "Will retry with job-level loop..."
+            exit 1
+          fi
+
+      - name: Cleanup on success
+        run: |
+          echo "Job succeeded! Performing cleanup..."
+          echo "Service is now stable"
+
+  # Step-level loop example (polling semantics)
+  polling_job:
+    name: Service Polling with Step-Level Loops
+    runs-on: ubuntu-latest
+    needs: initialization
+    steps:
+      - name: Initialize polling environment
+        run: |
+          echo "Setting up polling environment..."
+          echo "POLL_COUNT=0" >> "$GITHUB_ENV"
+          echo "SERVICE_READY=false" >> "$GITHUB_ENV"
+
+      - name: Poll external service availability
+        id: poll_service
+        loop:
+          until: env.SERVICE_READY == 'true'
+          max_iterations: 5
+        run: |
+          CURRENT_COUNT=$((${POLL_COUNT:-0} + 1))
+          echo "POLL_COUNT=$CURRENT_COUNT" >> "$GITHUB_ENV"
+          echo "Polling attempt #$CURRENT_COUNT..."
+          
+          # Simulate service becoming available after 3 attempts
+          if [ $CURRENT_COUNT -ge 3 ]; then
+            echo "SERVICE_READY=true" >> "$GITHUB_ENV"
+            echo "✅ Service is now available!"
+          else
+            echo "⏳ Service not ready yet, continuing to poll..."
+            sleep 2
+          fi
+
+      - name: Poll database connection
+        id: poll_database
+        loop:
+          until: env.DB_READY == 'true'
+          max_iterations: 4
+        run: |
+          echo "Checking database connectivity..."
+          DB_ATTEMPTS=$((${DB_ATTEMPTS:-0} + 1))
+          echo "DB_ATTEMPTS=$DB_ATTEMPTS" >> "$GITHUB_ENV"
+          
+          # Simulate database connection succeeding after 2 attempts
+          if [ $DB_ATTEMPTS -ge 2 ]; then
+            echo "DB_READY=true" >> "$GITHUB_ENV"
+            echo "✅ Database connection established"
+          else
+            echo "⏳ Database not ready, retrying..."
+            sleep 1
+          fi
+
+      - name: Verify both services ready
+        run: |
+          if [ "$SERVICE_READY" == "true" ] && [ "$DB_READY" == "true" ]; then
+            echo "✅ All services are ready!"
+            echo "Service polls: $POLL_COUNT"
+            echo "Database polls: $DB_ATTEMPTS"
+          else
+            echo "❌ Some services are not ready"
+            exit 1
+          fi
+
+  # Complex loop example with conditional retry
+  conditional_retry_job:
+    name: Conditional Retry Job
+    runs-on: ubuntu-latest
+    needs: initialization
+    
+    # Job-level loop with success condition
+    loop:
+      until: success()
+      max_iterations: 5
+    
+    steps:
+      - name: Initialize retry tracking
+        run: |
+          echo "RETRY_REASON=unknown" >> "$GITHUB_ENV"
+          echo "ERROR_TYPE=none" >> "$GITHUB_ENV"
+
+      - name: Attempt complex operation
+        run: |
+          echo "Attempting complex operation..."
+          
+          # Simulate different types of failures
+          FAILURE_TYPE=$((RANDOM % 4))
+          
+          case $FAILURE_TYPE in
+            0)
+              echo "✅ Operation completed successfully"
+              ;;
+            1)
+              echo "❌ Network timeout error"
+              echo "RETRY_REASON=network_timeout" >> "$GITHUB_ENV"
+              echo "ERROR_TYPE=retryable" >> "$GITHUB_ENV"
+              exit 1
+              ;;
+            2)
+              echo "❌ Temporary resource unavailable"
+              echo "RETRY_REASON=resource_unavailable" >> "$GITHUB_ENV"
+              echo "ERROR_TYPE=retryable" >> "$GITHUB_ENV"
+              exit 1
+              ;;
+            3)
+              echo "❌ Invalid configuration - non-retryable"
+              echo "RETRY_REASON=invalid_config" >> "$GITHUB_ENV"
+              echo "ERROR_TYPE=fatal" >> "$GITHUB_ENV"
+              echo "This error should not be retried"
+              exit 1
+              ;;
+          esac
+
+      - name: Handle step-level retries for transient errors
+        loop:
+          until: success() || env.ERROR_RESOLVED == 'true'
+          max_iterations: 3
+        run: |
+          echo "Checking if error is retryable..."
+          if [ "${ERROR_TYPE:-unknown}" == "retryable" ]; then
+            echo "Handling transient error: $RETRY_REASON"
+            
+            # Simulate error resolution
+            RESOLUTION_ATTEMPT=$((${RESOLUTION_ATTEMPT:-0} + 1))
+            echo "RESOLUTION_ATTEMPT=$RESOLUTION_ATTEMPT" >> "$GITHUB_ENV"
+            
+            if [ $RESOLUTION_ATTEMPT -ge 2 ]; then
+              echo "✅ Transient error resolved"
+              echo "ERROR_RESOLVED=true" >> "$GITHUB_ENV"
+            else
+              echo "⏳ Working on resolving error..."
+              sleep 1
+            fi
+          else
+            echo "Error is not retryable, skipping resolution attempt"
+            echo "ERROR_RESOLVED=true" >> "$GITHUB_ENV"
+          fi
+
+  # Multiple parallel jobs with individual loop semantics
+  parallel_loop_job_a:
+    name: Parallel Loop Job A
+    runs-on: ubuntu-latest
+    needs: initialization
+    
+    loop:
+      until: success()
+      max_iterations: 3
+    
+    steps:
+      - name: Process A with retries
+        run: |
+          echo "Running parallel process A..."
+          
+          # 50% chance of success
+          if [ $((RANDOM % 2)) -eq 0 ]; then
+            echo "✅ Process A completed"
+          else
+            echo "❌ Process A failed, will retry"
+            exit 1
+          fi
+
+  parallel_loop_job_b:
+    name: Parallel Loop Job B  
+    runs-on: ubuntu-latest
+    needs: initialization
+    
+    loop:
+      until: success()
+      max_iterations: 4
+    
+    steps:
+      - name: Process B with different retry count
+        run: |
+          echo "Running parallel process B..."
+          
+          # 33% chance of success
+          if [ $((RANDOM % 3)) -eq 0 ]; then
+            echo "✅ Process B completed"  
+          else
+            echo "❌ Process B failed, will retry"
+            exit 1
+          fi
+
+  # Final verification with step-level polling
+  verification:
+    name: Final Verification with Polling
+    runs-on: ubuntu-latest
+    needs: [unstable_service_job, polling_job, conditional_retry_job, parallel_loop_job_a, parallel_loop_job_b]
+    if: always()
+    steps:
+      - name: Check job completion status
+        run: |
+          echo "=== Loop Execution Results ==="
+          echo "Unstable Service: ${{ needs.unstable_service_job.result }}"
+          echo "Polling Job: ${{ needs.polling_job.result }}"
+          echo "Conditional Retry: ${{ needs.conditional_retry_job.result }}"
+          echo "Parallel Loop A: ${{ needs.parallel_loop_job_a.result }}"
+          echo "Parallel Loop B: ${{ needs.parallel_loop_job_b.result }}"
+
+      - name: Wait for final system stabilization
+        id: stability_check
+        loop:
+          until: env.SYSTEM_STABLE == 'true'
+          max_iterations: 3
+        run: |
+          echo "Checking system stability..."
+          STABILITY_CHECK=$((${STABILITY_CHECK:-0} + 1))
+          echo "STABILITY_CHECK=$STABILITY_CHECK" >> "$GITHUB_ENV"
+          
+          # System stable after 2 checks
+          if [ $STABILITY_CHECK -ge 2 ]; then
+            echo "SYSTEM_STABLE=true" >> "$GITHUB_ENV"
+            echo "✅ System is stable"
+          else
+            echo "⏳ Waiting for system to stabilize..."
+            sleep 1
+          fi
+
+      - name: Generate loop execution summary
+        run: |
+          echo "=== Loop Execution Summary ==="
+          echo "Job-level loops completed with retry semantics"
+          echo "Step-level loops completed with polling semantics"
+          echo "Maximum retries configured: ${{ needs.initialization.outputs.retry_count }}"
+          echo "Final system status: ${SYSTEM_STABLE:-unknown}"
+          echo "Total stability checks: ${STABILITY_CHECK:-0}"
+          
+          # Count successful jobs
+          SUCCESSFUL_JOBS=0
+          [ "${{ needs.unstable_service_job.result }}" == "success" ] && SUCCESSFUL_JOBS=$((SUCCESSFUL_JOBS + 1))
+          [ "${{ needs.polling_job.result }}" == "success" ] && SUCCESSFUL_JOBS=$((SUCCESSFUL_JOBS + 1))
+          [ "${{ needs.conditional_retry_job.result }}" == "success" ] && SUCCESSFUL_JOBS=$((SUCCESSFUL_JOBS + 1))
+          [ "${{ needs.parallel_loop_job_a.result }}" == "success" ] && SUCCESSFUL_JOBS=$((SUCCESSFUL_JOBS + 1))
+          [ "${{ needs.parallel_loop_job_b.result }}" == "success" ] && SUCCESSFUL_JOBS=$((SUCCESSFUL_JOBS + 1))
+          
+          echo "Successful jobs: $SUCCESSFUL_JOBS/5"
+          
+          if [ $SUCCESSFUL_JOBS -ge 3 ]; then
+            echo "✅ Loop execution workflow completed successfully"
+          else
+            echo "⚠️  Some loop jobs failed - review retry configurations"
+          fi

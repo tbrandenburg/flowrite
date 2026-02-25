@@ -298,7 +298,39 @@ class SimulationEngine:
             if not ready_jobs:
                 remaining = set(workflow_def.jobs.keys()) - completed
                 if remaining:
-                    logger.error(f"Dependency cycle: {remaining}")
+                    # Get detailed diagnostics
+                    diagnostics = DependencyResolver.get_job_diagnostics(
+                        workflow_def, completed, job_outputs, env_vars
+                    )
+
+                    # Categorize the issues
+                    waiting_for_deps = []
+                    condition_failed = []
+
+                    for job_id, diag in diagnostics.items():
+                        if diag["status"] == "waiting_for_dependencies":
+                            waiting_for_deps.append(
+                                f"{job_id} (needs: {diag['missing_dependencies']})"
+                            )
+                        elif diag["status"] == "condition_not_met":
+                            condition_failed.append(
+                                f"{job_id} (if: {diag['condition_details']['expression']})"
+                            )
+
+                    # Provide detailed error message
+                    if waiting_for_deps and condition_failed:
+                        logger.error(
+                            f"Jobs blocked - Dependencies: {waiting_for_deps}, Conditions: {condition_failed}"
+                        )
+                    elif waiting_for_deps:
+                        logger.error(
+                            f"Jobs waiting for dependencies: {waiting_for_deps}"
+                        )
+                    elif condition_failed:
+                        logger.error(f"Jobs with unmet conditions: {condition_failed}")
+                    else:
+                        logger.error(f"Unknown blocking issue with jobs: {remaining}")
+
                     break
                 else:
                     break
@@ -328,6 +360,7 @@ class SimulationEngine:
                 all_outputs = {}
 
                 # Execute steps
+                step_outputs = {}  # Track outputs by step id
                 for step in job_def.steps:
                     if step.run:
                         command = VariableSubstitution.substitute(step.run, env_vars)
@@ -336,20 +369,56 @@ class SimulationEngine:
                         )
                         all_outputs.update(outputs)
 
-                        # Update environment
+                        # Track step outputs by step id
                         if step.id:
+                            step_outputs[step.id] = outputs
+                            # Update environment for step references
                             for key, value in outputs.items():
                                 env_vars[f"STEP_{step.id}_{key}".upper()] = str(value)
+
+                # Process job-level output mappings
+                job_level_outputs = {}
+                if job_def.outputs:
+                    for output_name, output_expression in job_def.outputs.items():
+                        # Handle ${{ steps.step_id.outputs.key }} patterns
+                        if "${{" in output_expression:
+                            # Extract step reference: ${{ steps.deps.outputs.ready }}
+                            import re
+
+                            step_pattern = (
+                                r"\$\{\{\s*steps\.(\w+)\.outputs\.(\w+)\s*\}\}"
+                            )
+                            match = re.search(step_pattern, output_expression)
+                            if match:
+                                step_id = match.group(1)
+                                output_key = match.group(2)
+                                if (
+                                    step_id in step_outputs
+                                    and output_key in step_outputs[step_id]
+                                ):
+                                    job_level_outputs[output_name] = step_outputs[
+                                        step_id
+                                    ][output_key]
+                        else:
+                            # Direct value or variable substitution
+                            job_level_outputs[output_name] = (
+                                VariableSubstitution.substitute(
+                                    output_expression, env_vars
+                                )
+                            )
+
+                # Combine step outputs and job-level mapped outputs
+                final_outputs = {**all_outputs, **job_level_outputs}
 
                 # Store job result
                 job_outputs[job_id] = {
                     "job_id": job_id,
                     "status": "completed",
-                    "outputs": all_outputs,
+                    "outputs": final_outputs,
                 }
 
                 # Update global environment
-                for key, value in all_outputs.items():
+                for key, value in final_outputs.items():
                     env_vars[f"JOB_{job_id.upper()}_{key.upper()}"] = str(value)
 
                 completed.add(job_id)

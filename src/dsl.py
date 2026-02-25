@@ -4,8 +4,11 @@ Flowrite DSL - Domain Specific Language parser and evaluator for workflows
 
 import re
 import yaml
+import logging
 from typing import Any, Dict, List, Optional
 from .types import WorkflowDefinition, JobDefinition, StepDefinition, LoopConfig
+
+logger = logging.getLogger(__name__)
 
 
 class ConditionEvaluator:
@@ -15,19 +18,22 @@ class ConditionEvaluator:
     def evaluate_job_condition(
         condition: str, job_outputs: Dict[str, Dict[str, Any]], env_vars: Dict[str, str]
     ) -> bool:
-        """Evaluate job-level if conditions"""
+        """Evaluate job-level if conditions with robust error handling"""
         if not condition:
             return True
 
         condition = condition.strip()
+        logger.debug(f"Evaluating condition: {condition}")
 
         # Handle always()
         if condition == "always()":
+            logger.debug("Condition 'always()' evaluated to True")
             return True
 
         # Handle success(), failure(), cancelled() functions
         if condition in ["success()", "failure()", "cancelled()"]:
             # TODO: Implement based on actual execution context
+            logger.debug(f"Condition '{condition}' evaluated to True (default)")
             return True
 
         # Handle needs.job.outputs.key == 'value' patterns
@@ -38,7 +44,34 @@ class ConditionEvaluator:
             actual_value = (
                 job_outputs.get(job_id, {}).get("outputs", {}).get(output_key)
             )
-            return actual_value == expected_value
+            result = actual_value == expected_value
+            logger.debug(
+                f"Condition needs.{job_id}.outputs.{output_key} == '{expected_value}': "
+                f"actual='{actual_value}', result={result}"
+            )
+            return result
+
+        # Handle needs.job.result == 'value' patterns
+        result_pattern = r'needs\.(\w+)\.result\s*==\s*[\'"]([^\'"]*)[\'"]'
+        match = re.search(result_pattern, condition)
+        if match:
+            job_id, expected_result = match.groups()
+            # In simulation, we assume jobs succeed unless they failed
+            actual_result = job_outputs.get(job_id, {}).get("status", "success")
+            if actual_result == "completed":
+                actual_result = "success"
+            result = actual_result == expected_result
+            logger.debug(
+                f"Condition needs.{job_id}.result == '{expected_result}': "
+                f"actual='{actual_result}', result={result}"
+            )
+            return result
+
+        # Handle complex conditions with &&, ||
+        if " && " in condition or " || " in condition:
+            return ConditionEvaluator._evaluate_complex_condition(
+                condition, job_outputs, env_vars
+            )
 
         # Handle env.VARIABLE == 'value' patterns
         env_pattern = r'env\.(\w+)\s*==\s*[\'"]([^\'"]*)[\'"]'
@@ -46,10 +79,63 @@ class ConditionEvaluator:
         if match:
             var_name, expected_value = match.groups()
             actual_value = env_vars.get(var_name)
-            return actual_value == expected_value
+            result = actual_value == expected_value
+            logger.debug(
+                f"Condition env.{var_name} == '{expected_value}': "
+                f"actual='{actual_value}', result={result}"
+            )
+            return result
 
-        # Default to true for unknown conditions
+        # Handle boolean expressions like needs.job.outputs.key != 'value'
+        needs_not_pattern = r'needs\.(\w+)\.outputs\.(\w+)\s*!=\s*[\'"]([^\'"]*)[\'"]'
+        match = re.search(needs_not_pattern, condition)
+        if match:
+            job_id, output_key, expected_value = match.groups()
+            actual_value = (
+                job_outputs.get(job_id, {}).get("outputs", {}).get(output_key)
+            )
+            result = actual_value != expected_value
+            logger.debug(
+                f"Condition needs.{job_id}.outputs.{output_key} != '{expected_value}': "
+                f"actual='{actual_value}', result={result}"
+            )
+            return result
+
+        # Default to true for unknown conditions, but log a warning
+        logger.warning(f"Unknown condition pattern: '{condition}', defaulting to True")
         return True
+
+    @staticmethod
+    def _evaluate_complex_condition(
+        condition: str, job_outputs: Dict[str, Dict[str, Any]], env_vars: Dict[str, str]
+    ) -> bool:
+        """Evaluate complex conditions with && and || operators"""
+        logger.debug(f"Evaluating complex condition: {condition}")
+
+        # Simple implementation: split by || first (OR has lower precedence)
+        or_parts = condition.split(" || ")
+
+        for or_part in or_parts:
+            # For each OR part, check all AND conditions
+            and_parts = or_part.split(" && ")
+            and_result = True
+
+            for and_part in and_parts:
+                and_part = and_part.strip()
+                part_result = ConditionEvaluator.evaluate_job_condition(
+                    and_part, job_outputs, env_vars
+                )
+                and_result = and_result and part_result
+                logger.debug(f"  Part '{and_part}' = {part_result}")
+
+                if not and_result:
+                    break  # Short circuit AND
+
+            logger.debug(f"  OR part '{or_part.strip()}' = {and_result}")
+            if and_result:
+                return True  # Short circuit OR
+
+        return False
 
     @staticmethod
     def evaluate_loop_condition(
@@ -210,10 +296,65 @@ class DependencyResolver:
                     )
                     if condition_met:
                         ready.append(job_id)
+                    else:
+                        logger.debug(
+                            f"Job '{job_id}' condition not met: {job.if_condition}"
+                        )
                 else:
                     ready.append(job_id)
+            else:
+                missing_deps = [dep for dep in job.needs if dep not in completed]
+                logger.debug(f"Job '{job_id}' waiting for dependencies: {missing_deps}")
 
         return ready
+
+    @staticmethod
+    def get_job_diagnostics(
+        workflow: WorkflowDefinition,
+        completed: set,
+        job_outputs: Dict[str, Dict[str, Any]],
+        env_vars: Dict[str, str],
+    ) -> Dict[str, Dict[str, Any]]:
+        """Get detailed diagnostics for why jobs aren't ready"""
+        diagnostics = {}
+        remaining = set(workflow.jobs.keys()) - completed
+
+        for job_id in remaining:
+            job = workflow.jobs[job_id]
+            job_diag = {
+                "status": "waiting",
+                "dependencies_met": True,
+                "condition_met": True,
+                "missing_dependencies": [],
+                "condition_details": None,
+            }
+
+            # Check dependencies
+            missing_deps = [dep for dep in job.needs if dep not in completed]
+            if missing_deps:
+                job_diag["dependencies_met"] = False
+                job_diag["missing_dependencies"] = missing_deps
+                job_diag["status"] = "waiting_for_dependencies"
+
+            # Check conditions if dependencies are met
+            elif job.if_condition:
+                condition_met = ConditionEvaluator.evaluate_job_condition(
+                    job.if_condition, job_outputs, env_vars
+                )
+                job_diag["condition_met"] = condition_met
+                job_diag["condition_details"] = {
+                    "expression": job.if_condition,
+                    "evaluated_to": condition_met,
+                }
+                if not condition_met:
+                    job_diag["status"] = "condition_not_met"
+
+            if job_diag["dependencies_met"] and job_diag["condition_met"]:
+                job_diag["status"] = "ready"
+
+            diagnostics[job_id] = job_diag
+
+        return diagnostics
 
 
 class OutputParser:

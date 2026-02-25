@@ -1,0 +1,94 @@
+name: Basic Workflow Example
+
+jobs:
+  setup:
+    name: Setup Environment
+    runs-on: ubuntu-latest
+    outputs:
+      build_id: ${{ steps.generate.outputs.build_id }}
+      environment: ${{ steps.generate.outputs.environment }}
+    steps:
+      - name: Initialize workspace
+        run: |
+          echo "Setting up workspace..."
+          mkdir -p build logs
+          echo "Workspace initialized"
+
+      - name: Generate build info
+        id: generate
+        run: |
+          BUILD_ID="build-$(date +%s)"
+          ENVIRONMENT="development"
+          echo "build_id=$BUILD_ID" >> "$GITHUB_OUTPUT"
+          echo "environment=$ENVIRONMENT" >> "$GITHUB_OUTPUT"
+          echo "Generated Build ID: $BUILD_ID"
+          echo "Environment: $ENVIRONMENT"
+
+      - name: Set global environment
+        run: |
+          echo "GLOBAL_CONFIG=enabled" >> "$GITHUB_ENV"
+          echo "BUILD_TIMESTAMP=$(date -Iseconds)" >> "$GITHUB_ENV"
+          echo "Global configuration set"
+
+  build:
+    name: Build Application
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - name: Start build process
+        run: |
+          echo "Starting build with ID: ${{ needs.setup.outputs.build_id }}"
+          echo "Environment: ${{ needs.setup.outputs.environment }}"
+          echo "Global config: ${GLOBAL_CONFIG:-not_set}"
+
+      - name: Compile code
+        run: |
+          echo "Compiling application..."
+          sleep 2
+          echo "Compilation completed successfully"
+
+      - name: Run basic tests
+        run: |
+          echo "Running unit tests..."
+          sleep 1
+          echo "All tests passed"
+
+  package:
+    name: Package Application
+    runs-on: ubuntu-latest
+    needs: [setup, build]
+    steps:
+      - name: Create package
+        run: |
+          echo "Creating package for build: ${{ needs.setup.outputs.build_id }}"
+          echo "Package created successfully"
+
+      - name: Generate artifacts
+        run: |
+          echo "Generating deployment artifacts..."
+          echo "Artifacts ready for deployment"
+
+  notify:
+    name: Send Notifications
+    runs-on: ubuntu-latest
+    needs: [setup, build, package]
+    if: always()
+    steps:
+      - name: Success notification
+        run: |
+          echo "SUCCESS: Build ${{ needs.setup.outputs.build_id }} completed successfully"
+          echo "Environment: ${{ needs.setup.outputs.environment }}"
+
+      - name: Failure notification
+        run: |
+          echo "INFO: Checking build status..."
+          echo "Build ID: ${{ needs.setup.outputs.build_id }}"
+
+      - name: Completion summary
+        run: |
+          echo "=== Build Summary ==="
+          echo "Build ID: ${{ needs.setup.outputs.build_id }}"
+          echo "Environment: ${{ needs.setup.outputs.environment }}"
+          echo "Build Status: completed"
+          echo "Package Status: completed"
+          echo "Timestamp: ${BUILD_TIMESTAMP:-unknown}"
