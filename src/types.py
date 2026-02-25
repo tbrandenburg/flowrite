@@ -37,6 +37,7 @@ class LoopConfig:
     """Configuration for job and step-level loops"""
 
     until: Optional[str] = None  # Condition expression
+    foreach: Optional[str] = None  # List of items to iterate over
     max_iterations: int = 1
 
 

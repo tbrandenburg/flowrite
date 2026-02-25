@@ -1,0 +1,254 @@
+name: Foreach File Processing Example
+
+jobs:
+  preparation:
+    name: Prepare File Lists
+    runs-on: ubuntu-latest
+    outputs:
+      file_list: ${{ steps.generate.outputs.files }}
+      config_list: ${{ steps.generate.outputs.configs }}
+      env_types: ${{ steps.generate.outputs.environments }}
+    steps:
+      - name: Generate file lists for processing
+        id: generate
+        run: |
+          # Create newline-separated file list
+          FILES="data/input1.txt
+          data/input2.txt
+          data/input3.txt
+          logs/app.log
+          logs/error.log"
+          echo "files=$FILES" >> "$GITHUB_OUTPUT"
+          echo "📄 Generated file list for processing"
+          
+          # Create space-separated config list
+          CONFIGS="app.config db.config cache.config"
+          echo "configs=$CONFIGS" >> "$GITHUB_OUTPUT"
+          echo "⚙️ Generated configuration files list"
+          
+          # Create environment types (space-separated)
+          ENVIRONMENTS="development staging production"
+          echo "environments=$ENVIRONMENTS" >> "$GITHUB_OUTPUT"
+          echo "🌱 Generated environment types list"
+
+      - name: Display preparation results
+        run: |
+          echo "📊 === Preparation Results ==="
+          echo "📄 Files to process: ${{ steps.generate.outputs.files }}"
+          echo "⚙️ Config files: ${{ steps.generate.outputs.configs }}"
+          echo "🌱 Environments: ${{ steps.generate.outputs.environments }}"
+
+  # Step-level foreach example - process files within single job
+  file_processing:
+    name: Process Files with Step-Level Foreach
+    runs-on: ubuntu-latest
+    needs: preparation
+    steps:
+      - name: Initialize processing environment
+        run: |
+          echo "🚀 Initializing file processing environment..."
+          echo "PROCESSED_COUNT=0" >> "$GITHUB_ENV"
+          echo "TOTAL_SIZE=0" >> "$GITHUB_ENV"
+          echo "SUCCESS_COUNT=0" >> "$GITHUB_ENV"
+
+      - name: Process each file
+        id: process_files
+        loop:
+          foreach: ${{ needs.preparation.outputs.file_list }}
+          max_iterations: 10
+        run: |
+          echo "📄 Processing file: $FOREACH_ITEM"
+          echo "🔢 Item index: $FOREACH_INDEX (iteration $FOREACH_ITERATION)"
+          
+          # Simulate file processing based on file type
+          case "$FOREACH_ITEM" in
+            *.txt)
+              echo "📝 Processing text file: $FOREACH_ITEM"
+              FILE_SIZE="1024"
+              echo "✅ Text file processed successfully"
+              ;;
+            *.log)
+              echo "📊 Processing log file: $FOREACH_ITEM" 
+              FILE_SIZE="2048"
+              echo "✅ Log file processed successfully"
+              ;;
+            *)
+              echo "❓ Unknown file type: $FOREACH_ITEM"
+              FILE_SIZE="512"
+              echo "⚠️ Processed with default handler"
+              ;;
+          esac
+          
+          # Update counters
+          NEW_PROCESSED=$((${PROCESSED_COUNT:-0} + 1))
+          NEW_TOTAL_SIZE=$((${TOTAL_SIZE:-0} + $FILE_SIZE))
+          NEW_SUCCESS=$((${SUCCESS_COUNT:-0} + 1))
+          
+          echo "PROCESSED_COUNT=$NEW_PROCESSED" >> "$GITHUB_ENV"
+          echo "TOTAL_SIZE=$NEW_TOTAL_SIZE" >> "$GITHUB_ENV"  
+          echo "SUCCESS_COUNT=$NEW_SUCCESS" >> "$GITHUB_ENV"
+          
+          echo "📊 Processed: $NEW_PROCESSED | Total size: $NEW_TOTAL_SIZE bytes"
+
+      - name: Validate each configuration
+        id: validate_configs
+        loop:
+          foreach: ${{ needs.preparation.outputs.config_list }}
+          max_iterations: 5
+        run: |
+          echo "⚙️ Validating configuration: $FOREACH_ITEM"
+          echo "🔢 Config index: $FOREACH_INDEX (iteration $FOREACH_ITERATION)"
+          
+          # Simulate configuration validation
+          case "$FOREACH_ITEM" in
+            app.config)
+              echo "🏗️ Validating application configuration..."
+              echo "✅ Application config is valid"
+              ;;
+            db.config)
+              echo "🗄️ Validating database configuration..."
+              echo "✅ Database config is valid"
+              ;;
+            cache.config)
+              echo "💾 Validating cache configuration..."
+              echo "✅ Cache config is valid"
+              ;;
+            *)
+              echo "❓ Unknown configuration: $FOREACH_ITEM"
+              echo "✅ Validated with default rules"
+              ;;
+          esac
+
+      - name: Generate processing summary
+        run: |
+          echo "📊 === File Processing Summary ==="
+          echo "📄 Files processed: ${PROCESSED_COUNT:-0}"
+          echo "📊 Total data size: ${TOTAL_SIZE:-0} bytes"
+          echo "✅ Successful operations: ${SUCCESS_COUNT:-0}"
+          echo "⚙️ Configurations validated: 3"
+          echo "🎉 Step-level foreach processing completed"
+
+  # Job-level foreach example - run entire job for each environment
+  environment_deployment:
+    name: Deploy to Environment
+    runs-on: ubuntu-latest
+    needs: [preparation, file_processing]
+    
+    # Job-level foreach - entire job runs for each environment
+    loop:
+      foreach: ${{ needs.preparation.outputs.env_types }}
+      max_iterations: 5
+    
+    steps:
+      - name: Initialize deployment
+        run: |
+          echo "🚀 Starting deployment to: $FOREACH_ITEM"
+          echo "🔢 Environment index: $FOREACH_INDEX (iteration $FOREACH_ITERATION)"
+          echo "🌱 Deploying to environment: $FOREACH_ITEM"
+          
+          # Set environment-specific variables
+          echo "DEPLOY_ENV=$FOREACH_ITEM" >> "$GITHUB_ENV"
+          echo "ENV_INDEX=$FOREACH_INDEX" >> "$GITHUB_ENV"
+          echo "ENV_ITERATION=$FOREACH_ITERATION" >> "$GITHUB_ENV"
+
+      - name: Configure environment-specific settings
+        run: |
+          echo "⚙️ Configuring settings for: $DEPLOY_ENV"
+          
+          case "$DEPLOY_ENV" in
+            development)
+              echo "🛠️ Development environment configuration"
+              echo "DEBUG_MODE=true" >> "$GITHUB_ENV"
+              echo "REPLICAS=1" >> "$GITHUB_ENV"
+              echo "LOG_LEVEL=debug" >> "$GITHUB_ENV"
+              ;;
+            staging)
+              echo "🎭 Staging environment configuration"
+              echo "DEBUG_MODE=false" >> "$GITHUB_ENV"
+              echo "REPLICAS=2" >> "$GITHUB_ENV"
+              echo "LOG_LEVEL=info" >> "$GITHUB_ENV"
+              ;;
+            production)
+              echo "🏭 Production environment configuration"
+              echo "DEBUG_MODE=false" >> "$GITHUB_ENV"
+              echo "REPLICAS=3" >> "$GITHUB_ENV"
+              echo "LOG_LEVEL=warn" >> "$GITHUB_ENV"
+              ;;
+          esac
+          
+          echo "✅ Environment configured: $DEPLOY_ENV"
+
+      - name: Deploy application
+        run: |
+          echo "🚀 Deploying application to: $DEPLOY_ENV"
+          echo "🔧 Debug mode: ${DEBUG_MODE:-unknown}"
+          echo "📊 Replicas: ${REPLICAS:-unknown}"
+          echo "📝 Log level: ${LOG_LEVEL:-unknown}"
+          
+          # Simulate deployment steps
+          echo "📦 Pushing application package..."
+          echo "⚙️ Updating configuration..."
+          echo "🔄 Restarting services (${REPLICAS} replicas)..."
+          echo "🔍 Running health checks..."
+          
+          echo "✅ Deployment to $DEPLOY_ENV completed successfully"
+
+      - name: Post-deployment verification
+        run: |
+          echo "🔍 Verifying deployment to: $DEPLOY_ENV"
+          echo "📊 Environment index: $ENV_INDEX"
+          echo "🔢 Deployment iteration: $ENV_ITERATION"
+          
+          # Simulate verification checks
+          echo "🌐 Checking service endpoints..."
+          echo "📊 Validating metrics collection..."
+          echo "🔒 Verifying security settings..."
+          
+          echo "✅ Verification completed for: $DEPLOY_ENV"
+          echo "🎉 $DEPLOY_ENV deployment successful!"
+
+  # Final verification job that processes results from all deployments
+  final_verification:
+    name: Final Verification and Reporting
+    runs-on: ubuntu-latest
+    needs: [preparation, file_processing, environment_deployment]
+    if: always()
+    steps:
+      - name: Collect deployment results
+        run: |
+          echo "📊 === Final Verification Report ==="
+          echo "📄 File Processing Status: ${{ needs.file_processing.result }}"
+          echo "🌱 Environment Deployment Status: ${{ needs.environment_deployment.result }}"
+          echo "✅ All foreach operations completed"
+
+      - name: Generate summary statistics
+        run: |
+          echo "🔢 === Foreach Execution Statistics ==="
+          echo "📄 Files processed: Multiple files via step-level foreach"
+          echo "⚙️ Configurations validated: 3 configs via step-level foreach" 
+          echo "🌱 Environments deployed: 3 environments via job-level foreach"
+          echo "🔄 Total foreach iterations: File processing + Config validation + Environment deployments"
+
+      - name: Verify foreach environment variables
+        id: foreach_demo
+        loop:
+          foreach: "demo1 demo2 demo3"
+          max_iterations: 5
+        run: |
+          echo "🧪 Demonstration of foreach environment variables:"
+          echo "📝 FOREACH_ITEM: $FOREACH_ITEM"
+          echo "🔢 FOREACH_INDEX: $FOREACH_INDEX" 
+          echo "🔄 FOREACH_ITERATION: $FOREACH_ITERATION"
+          echo "✅ Foreach variables working correctly"
+
+      - name: Final success confirmation
+        run: |
+          echo "🎉 === Foreach File Processing Workflow Completed ==="
+          echo "✅ Step-level foreach: File and config processing completed"
+          echo "✅ Job-level foreach: Multi-environment deployment completed"
+          echo "✅ Variable demonstration: Foreach environment variables confirmed"
+          echo "📊 All foreach patterns demonstrated successfully"
+          
+          # Show final status
+          echo "🏁 Workflow execution completed successfully"
+          echo "📈 Foreach functionality fully validated"
