@@ -59,3 +59,36 @@ class TestGitHubActionsVariables:
         context = {"job_outputs": {}}
         result = VariableSubstitution.substitute(text, {}, context)
         assert result == "Missing: "
+
+    def test_github_actions_spacing_variations(self):
+        """Test that GitHub Actions patterns work with various spacing combinations."""
+        context = {
+            "job_outputs": {"setup": {"build_id": "12345"}},
+            "step_outputs": {"version": "1.2.3"},
+        }
+
+        # Test various spacing combinations
+        test_cases = [
+            "${{ needs.setup.outputs.build_id }}",  # Standard spacing
+            "${{needs.setup.outputs.build_id}}",  # No spaces
+            "${{  needs.setup.outputs.build_id  }}",  # Extra spaces
+            "${{ needs.setup.outputs.build_id}}",  # Mixed spacing
+            "${{needs.setup.outputs.build_id }}",  # Mixed spacing
+        ]
+
+        for pattern in test_cases:
+            result = VariableSubstitution.substitute(
+                f"Build ID: {pattern}", {}, context
+            )
+            assert result == "Build ID: 12345", f"Failed for pattern: {pattern}"
+
+    def test_github_actions_multiple_patterns_different_spacing(self):
+        """Test multiple patterns with different spacing in same text."""
+        context = {
+            "job_outputs": {"setup": {"build_id": "12345"}},
+            "step_outputs": {"version": "1.2.3"},
+        }
+
+        text = "Build: ${{ needs.setup.outputs.build_id }} Version: ${{steps.test.outputs.version}}"
+        result = VariableSubstitution.substitute(text, {}, context)
+        assert result == "Build: 12345 Version: 1.2.3"

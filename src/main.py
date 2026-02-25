@@ -637,29 +637,6 @@ class LocalEngine:
             return step_outputs_dict.get(output_key)
         return None
 
-    def _resolve_github_actions_reference(self, expression, context):
-        """Resolve GitHub Actions patterns like ${{ needs.setup.outputs.build_id }}"""
-        import re
-
-        # Handle needs.* patterns
-        needs_pattern = r"\$\{\{\s*needs\.(\w+)\.outputs\.(\w+)\s*\}\}"
-        needs_match = re.search(needs_pattern, expression)
-        if needs_match:
-            job_id = needs_match.group(1)
-            output_key = needs_match.group(2)
-            # Return from context or workflow state
-            return context.get("job_outputs", {}).get(job_id, {}).get(output_key, "")
-
-        # Handle steps.* patterns (existing logic)
-        step_pattern = r"\$\{\{\s*steps\.(\w+)\.outputs\.(\w+)\s*\}\}"
-        step_match = re.search(step_pattern, expression)
-        if step_match:
-            step_id = step_match.group(1)
-            output_key = step_match.group(2)
-            return context.get("step_outputs", {}).get(output_key, "")
-
-        return None
-
     def _update_global_environment(self, job_id, final_outputs, env_vars):
         """Update global environment variables with job outputs"""
         for key, value in final_outputs.items():
