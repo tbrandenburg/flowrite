@@ -49,6 +49,24 @@ async def execute_job_step(
     executor = BashExecutor(config.activity_timeout_seconds)
     success, stdout, stderr, env_updates = executor.execute(command, env_vars)
 
+    # Log command output for visibility
+    if stdout.strip():
+        # Filter out the special parsing markers
+        clean_lines = []
+        in_output_section = False
+        for line in stdout.split('\n'):
+            if line.strip() == "=== GITHUB_OUTPUT ===":
+                in_output_section = True
+            elif line.strip() == "=== END ===":
+                in_output_section = False
+            elif not in_output_section and line.strip() and "GITHUB_" not in line:
+                clean_lines.append(line)
+        
+        if clean_lines:
+            for line in clean_lines:
+                if line.strip():
+                    logger.info(f"TEMPORAL: {line}")
+
     # Parse outputs
     outputs = OutputParser.parse_github_output(command)
     outputs.update(OutputParser.parse_github_env(command))
@@ -534,6 +552,24 @@ class LocalEngine:
                 )
 
                 if success:
+                    # Log command output for visibility
+                    if stdout.strip():
+                        # Filter out the special parsing markers
+                        clean_lines = []
+                        in_output_section = False
+                        for line in stdout.split('\n'):
+                            if line.strip() == "=== GITHUB_OUTPUT ===":
+                                in_output_section = True
+                            elif line.strip() == "=== END ===":
+                                in_output_section = False
+                            elif not in_output_section and line.strip() and "GITHUB_" not in line:
+                                clean_lines.append(line)
+                        
+                        if clean_lines:
+                            for line in clean_lines:
+                                if line.strip():
+                                    logger.info(f"LOCAL: {line}")
+                    
                     outputs = env_updates
                     return outputs, True, None
                 elif attempt < max_retries:
