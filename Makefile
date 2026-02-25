@@ -1,7 +1,7 @@
 # Flowrite Workflow Executor Makefile
 # Using uv for modern Python project management
 
-.PHONY: help install test pytest run clean worker simulation dev-setup
+.PHONY: help install test pytest run clean worker simulation local dev-setup
 .DEFAULT_GOAL := help
 
 # Check if uv is installed
@@ -27,6 +27,7 @@ help:
 	@echo "  test        - Run complete test suite (unit tests + integration tests)"
 	@echo "  pytest      - Run unit tests only"
 	@echo "  run         - Run workflow (use YAML=file.yaml)"
+	@echo "  local       - Run workflow in local mode (real bash execution)"
 	@echo "  simulation  - Run workflow in simulation mode"
 	@echo "  worker      - Start Temporal worker"
 	@echo "  sample      - Create sample workflow"
@@ -40,6 +41,7 @@ help:
 	@echo "Examples:"
 	@echo "  make install"
 	@echo "  make run YAML=flow_blueprint.yaml"
+	@echo "  make local YAML=test_workflow.yaml"
 	@echo "  make simulation YAML=test_workflow.yaml"
 	@echo "  make test"
 
@@ -95,6 +97,15 @@ ifndef YAML
 endif
 	@echo "Running workflow in simulation: $(YAML)"
 	@$(PY) -m src.main run $(YAML) --simulation
+
+# Run in local mode (real bash execution)
+local:
+ifndef YAML
+	@echo "Error: Please specify YAML file with YAML=filename.yaml"
+	@exit 1
+endif
+	@echo "Running workflow in local mode: $(YAML)"
+	@$(PY) -m src.main run $(YAML) --local
 
 # Start Temporal worker
 worker:
