@@ -54,14 +54,14 @@ async def execute_job_step(
         # Filter out the special parsing markers
         clean_lines = []
         in_output_section = False
-        for line in stdout.split('\n'):
+        for line in stdout.split("\n"):
             if line.strip() == "=== GITHUB_OUTPUT ===":
                 in_output_section = True
             elif line.strip() == "=== END ===":
                 in_output_section = False
             elif not in_output_section and line.strip() and "GITHUB_" not in line:
                 clean_lines.append(line)
-        
+
         if clean_lines:
             for line in clean_lines:
                 if line.strip():
@@ -557,19 +557,23 @@ class LocalEngine:
                         # Filter out the special parsing markers
                         clean_lines = []
                         in_output_section = False
-                        for line in stdout.split('\n'):
+                        for line in stdout.split("\n"):
                             if line.strip() == "=== GITHUB_OUTPUT ===":
                                 in_output_section = True
                             elif line.strip() == "=== END ===":
                                 in_output_section = False
-                            elif not in_output_section and line.strip() and "GITHUB_" not in line:
+                            elif (
+                                not in_output_section
+                                and line.strip()
+                                and "GITHUB_" not in line
+                            ):
                                 clean_lines.append(line)
-                        
+
                         if clean_lines:
                             for line in clean_lines:
                                 if line.strip():
                                     logger.info(f"LOCAL: {line}")
-                    
+
                     outputs = env_updates
                     return outputs, True, None
                 elif attempt < max_retries:
@@ -631,6 +635,29 @@ class LocalEngine:
             # Note: step_outputs_dict here is actually all_outputs, need to find step-specific outputs
             # This is a simplified version - might need refinement based on actual step output tracking
             return step_outputs_dict.get(output_key)
+        return None
+
+    def _resolve_github_actions_reference(self, expression, context):
+        """Resolve GitHub Actions patterns like ${{ needs.setup.outputs.build_id }}"""
+        import re
+
+        # Handle needs.* patterns
+        needs_pattern = r"\$\{\{\s*needs\.(\w+)\.outputs\.(\w+)\s*\}\}"
+        needs_match = re.search(needs_pattern, expression)
+        if needs_match:
+            job_id = needs_match.group(1)
+            output_key = needs_match.group(2)
+            # Return from context or workflow state
+            return context.get("job_outputs", {}).get(job_id, {}).get(output_key, "")
+
+        # Handle steps.* patterns (existing logic)
+        step_pattern = r"\$\{\{\s*steps\.(\w+)\.outputs\.(\w+)\s*\}\}"
+        step_match = re.search(step_pattern, expression)
+        if step_match:
+            step_id = step_match.group(1)
+            output_key = step_match.group(2)
+            return context.get("step_outputs", {}).get(output_key, "")
+
         return None
 
     def _update_global_environment(self, job_id, final_outputs, env_vars):

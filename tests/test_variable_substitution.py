@@ -71,12 +71,12 @@ class TestVariableSubstitution:
         result = VariableSubstitution.substitute(text, variables)
         assert result == "User developer in staging with config app.config"
 
-        # Test missing variables - current implementation replaces with empty string if not in env
+        # Test missing variables - missing environment variables remain unchanged
         text = "Available: ${AVAILABLE}, Missing: ${MISSING}"
         variables = {"AVAILABLE": "yes"}
         result = VariableSubstitution.substitute(text, variables)
-        # Current implementation gets empty string from os.environ.get(var_name, "")
-        assert result == "Available: yes, Missing: "
+        # Missing environment variables are left as-is rather than replaced with empty string
+        assert result == "Available: yes, Missing: ${MISSING}"
 
     def test_github_env_propagation(self):
         """Test GITHUB_ENV variables should propagate between steps"""
