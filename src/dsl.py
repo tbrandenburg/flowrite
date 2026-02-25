@@ -36,6 +36,12 @@ class ConditionEvaluator:
             logger.debug(f"Condition '{condition}' evaluated to True (default)")
             return True
 
+        # Handle complex conditions with &&, || FIRST (before individual patterns)
+        if " && " in condition or " || " in condition:
+            return ConditionEvaluator._evaluate_complex_condition(
+                condition, job_outputs, env_vars
+            )
+
         # Handle needs.job.outputs.key == 'value' patterns
         needs_pattern = r'needs\.(\w+)\.outputs\.(\w+)\s*==\s*[\'"]([^\'"]*)[\'"]'
         match = re.search(needs_pattern, condition)
@@ -67,12 +73,6 @@ class ConditionEvaluator:
             )
             return result
 
-        # Handle complex conditions with &&, ||
-        if " && " in condition or " || " in condition:
-            return ConditionEvaluator._evaluate_complex_condition(
-                condition, job_outputs, env_vars
-            )
-
         # Handle env.VARIABLE == 'value' patterns
         env_pattern = r'env\.(\w+)\s*==\s*[\'"]([^\'"]*)[\'"]'
         match = re.search(env_pattern, condition)
@@ -98,6 +98,21 @@ class ConditionEvaluator:
             logger.debug(
                 f"Condition needs.{job_id}.outputs.{output_key} != '{expected_value}': "
                 f"actual='{actual_value}', result={result}"
+            )
+            return result
+
+        # Handle needs.job.result != 'value' patterns
+        result_not_pattern = r'needs\.(\w+)\.result\s*!=\s*[\'"]([^\'"]*)[\'"]'
+        match = re.search(result_not_pattern, condition)
+        if match:
+            job_id, expected_result = match.groups()
+            actual_result = job_outputs.get(job_id, {}).get("status", "success")
+            if actual_result == "completed":
+                actual_result = "success"
+            result = actual_result != expected_result
+            logger.debug(
+                f"Condition needs.{job_id}.result != '{expected_result}': "
+                f"actual='{actual_result}', result={result}"
             )
             return result
 

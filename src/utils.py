@@ -179,15 +179,23 @@ echo "=== END ==="
                 then_lines = []
                 else_lines = []
                 in_else = False
+                nesting_level = 1  # Track nested if statements
 
-                # Collect lines until 'fi'
+                # Collect lines until matching 'fi'
                 while i < len(lines):
                     current_line = lines[i].strip()
                     i += 1
 
-                    if current_line == "fi":
-                        break
-                    elif current_line == "else":
+                    if current_line.startswith("if ") and current_line.endswith(
+                        "; then"
+                    ):
+                        nesting_level += 1
+                    elif current_line == "fi":
+                        nesting_level -= 1
+                        if nesting_level == 0:
+                            break
+                    elif current_line == "else" and nesting_level == 1:
+                        # Only switch to else block for the outer if statement
                         in_else = True
                         continue
 
@@ -209,6 +217,19 @@ echo "=== END ==="
                     ):
                         # Process variable assignment
                         self._process_variable_assignment(block_line, sim_env)
+                    elif (
+                        "GITHUB_OUTPUT" in block_line
+                        or (
+                            ">>" in block_line
+                            and 'echo "' in block_line
+                            and "=" in block_line
+                        )
+                    ) and 'echo "' in block_line:
+                        # Process GitHub output
+                        self._process_github_output(block_line, sim_env, outputs)
+                    elif "GITHUB_ENV" in block_line and 'echo "' in block_line:
+                        # Process GitHub env
+                        self._process_github_env(block_line, sim_env, outputs)
                 continue
 
             # Simulate variable assignments (VAR=value or VAR="value")
@@ -216,7 +237,10 @@ echo "=== END ==="
                 self._process_variable_assignment(line, sim_env)
 
             # Parse GITHUB_OUTPUT patterns with variable expansion
-            elif "GITHUB_OUTPUT" in line and 'echo "' in line:
+            elif (
+                "GITHUB_OUTPUT" in line
+                or (">>" in line and 'echo "' in line and "=" in line)
+            ) and 'echo "' in line:
                 self._process_github_output(line, sim_env, outputs)
 
             # Parse GITHUB_ENV patterns with variable expansion
@@ -228,31 +252,66 @@ echo "=== END ==="
     def _evaluate_bash_condition(self, condition: str, sim_env: Dict[str, str]) -> bool:
         """Evaluate simple bash conditions"""
         # Expand variables in condition
-        condition = VariableSubstitution.substitute(condition, sim_env)
+        expanded_condition = VariableSubstitution.substitute(condition, sim_env)
 
         # Handle pattern matching like [[ "$VAR" =~ ^(val1|val2)$ ]]
-        if "=~" in condition:
+        if "=~" in expanded_condition:
             # Simple regex pattern matching
             import re
 
+            # Try to match [[ "value" =~ pattern ]] format
+            bracket_match = re.search(
+                r'\[\[\s*"([^"]*)"\s*=~\s*(.+?)\s*\]\]', expanded_condition
+            )
+            if bracket_match:
+                left = bracket_match.group(1)
+                pattern = bracket_match.group(2).strip()
+                try:
+                    return bool(re.match(pattern, left))
+                except Exception as e:
+                    pass
+
+            # Fallback to simple split approach
+            parts = expanded_condition.split("=~", 1)
+            if len(parts) == 2:
+                left = parts[0].strip().strip("\"'[]")
+                right = parts[1].strip().strip("\"'[]")
+
+                try:
+                    return bool(re.match(right, left))
+                except Exception as e:
+                    pass
+
+            # Fallback to simple split approach
             parts = condition.split("=~", 1)
             if len(parts) == 2:
                 left = parts[0].strip().strip("\"'[]")
-                right = parts[1].strip().strip("\"'[]^$")
+                right = parts[1].strip().strip("\"'[]")
 
-                # Convert bash pattern to regex
-                pattern = right.replace("(", "(").replace(")", ")").replace("|", "|")
                 try:
-                    return bool(re.match(pattern, left))
+                    return bool(re.match(right, left))
                 except:
                     pass
 
-        # Handle equality checks
+        # Handle equality checks with proper bracket parsing
         if "==" in condition:
+            import re
+
+            # Try to match [[ "value" == "value" ]] pattern
+            bracket_match = re.search(
+                r'\[\[\s*["\']?([^"\']*?)["\']?\s*==\s*["\']?([^"\']*?)["\']?\s*\]\]',
+                condition,
+            )
+            if bracket_match:
+                left = bracket_match.group(1)
+                right = bracket_match.group(2)
+                return left == right
+
+            # Fallback to simple split for other patterns
             parts = condition.split("==", 1)
             if len(parts) == 2:
                 left = parts[0].strip().strip("\"'[]")
-                right = parts[1].strip().strip("\"'")
+                right = parts[1].strip().strip("\"'[]")
                 return left == right
 
         # Default to true for unknown conditions
@@ -287,6 +346,7 @@ echo "=== END ==="
                     "$(date +%s)": str(int(time.time())),
                     "$(date +%Y%m%d_%H%M%S)": time.strftime("%Y%m%d_%H%M%S"),
                     "$(date +%Y%m%d)": time.strftime("%Y%m%d"),
+                    "$(date +%H)": time.strftime("%H"),  # Hour in 24-hour format
                     "$(date +%H%M)": time.strftime("%H%M"),
                     "$(date -Iseconds)": time.strftime("%Y-%m-%dT%H:%M:%S%z")
                     or time.strftime("%Y-%m-%dT%H:%M:%S"),
