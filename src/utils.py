@@ -61,21 +61,23 @@ class VariableSubstitution:
 
         result = text
 
-        # Handle needs.* patterns
+        # Handle needs.* patterns - use original matched pattern
         needs_pattern = r"\$\{\{\s*needs\.(\w+)\.outputs\.(\w+)\s*\}\}"
-        needs_matches = re.findall(needs_pattern, result)
-        for job_id, output_key in needs_matches:
+        for match in re.finditer(needs_pattern, result):
+            original_pattern = match.group(0)  # Full match including exact spacing
+            job_id = match.group(1)
+            output_key = match.group(2)
             value = context.get("job_outputs", {}).get(job_id, {}).get(output_key, "")
-            pattern = f"${{{{ needs.{job_id}.outputs.{output_key} }}}}"
-            result = result.replace(pattern, str(value))
+            result = result.replace(original_pattern, str(value))
 
-        # Handle steps.* patterns
+        # Handle steps.* patterns - use original matched pattern
         step_pattern = r"\$\{\{\s*steps\.(\w+)\.outputs\.(\w+)\s*\}\}"
-        step_matches = re.findall(step_pattern, result)
-        for step_id, output_key in step_matches:
+        for match in re.finditer(step_pattern, result):
+            original_pattern = match.group(0)  # Full match including exact spacing
+            step_id = match.group(1)
+            output_key = match.group(2)
             value = context.get("step_outputs", {}).get(output_key, "")
-            pattern = f"${{{{ steps.{step_id}.outputs.{output_key} }}}}"
-            result = result.replace(pattern, str(value))
+            result = result.replace(original_pattern, str(value))
 
         return result
 
