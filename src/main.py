@@ -100,7 +100,13 @@ async def get_workflow_id() -> str:
 @activity.defn
 async def load_workflow_file(workflow_file: str) -> dict:
     """Load and parse workflow file (non-deterministic operation)"""
-    if not os.path.exists(workflow_file):
+    from src.security.path import validate_workflow_path, PathTraversalError
+
+    try:
+        workflow_file = validate_workflow_path(workflow_file)
+    except PathTraversalError as e:
+        raise ValueError(f"Unsafe path: {e}")
+    except FileNotFoundError:
         raise FileNotFoundError(f"Workflow file not found: {workflow_file}")
 
     workflow_def = WorkflowParser.load_from_file(workflow_file)
@@ -883,8 +889,12 @@ async def execute_workflow(yaml_file: str, local_mode: bool) -> WorkflowResult:
     """Execute workflow in local or temporal mode"""
     global config
 
-    if not os.path.exists(yaml_file):
-        raise ValueError(f"{yaml_file} not found")
+    from src.security.path import validate_workflow_path, PathTraversalError
+
+    try:
+        yaml_file = validate_workflow_path(yaml_file)
+    except (PathTraversalError, FileNotFoundError) as e:
+        raise ValueError(str(e))
 
     try:
         if local_mode:
@@ -927,11 +937,22 @@ def cli(ctx):
 
 
 @cli.command()
-@click.argument("yaml_file", type=click.Path(exists=True, dir_okay=False))
+@click.argument("yaml_file", type=str)
 @click.option("--local", is_flag=True, help="Execute locally (real bash commands)")
 @click.pass_context
 def run(ctx, yaml_file: str, local: bool):
     """Execute workflow from YAML file"""
+    from src.security.path import validate_workflow_path, PathTraversalError
+
+    try:
+        yaml_file = validate_workflow_path(yaml_file)
+    except PathTraversalError as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+    except FileNotFoundError as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+
     mode_desc = "(local)" if local else "(temporal)"
     click.echo(f"Executing {yaml_file} {mode_desc}")
 
@@ -972,6 +993,14 @@ def worker():
 )
 def create_sample(filename: str):
     """Create sample YAML workflow"""
+    from src.security.path import validate_safe_path, PathTraversalError
+
+    try:
+        filename = validate_safe_path(filename, allowed_dir=os.getcwd())
+    except PathTraversalError as e:
+        click.echo(f"Error: Cannot write outside current directory: {e}", err=True)
+        raise SystemExit(1)
+
     content = get_sample_workflow_content()
 
     try:
